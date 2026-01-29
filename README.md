@@ -12,7 +12,7 @@ In addition to parking operations, the system supports administrative reporting 
 provide insights into garage utilization, pricing trends, and demand patterns, enabling data-driven
 decision making.
 
-# Current Project Objectives
+## Current Project Objectives
 - Track real-time parking spot occupancy.
 - Allow customers to reserve spaces within defined time windows.
 - Reduce congestion my assisting with driver navigation to vacant spots.
