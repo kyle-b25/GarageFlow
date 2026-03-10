@@ -1,0 +1,125 @@
+List of all data entities for any GarageFlow implementation.
+
+############################
+System Data Entities (Static)
+############################
+GARAGE. Definition of the garage. Stores:
+•Garage's name
+•Total capacity
+•Number of floors
+•Operating hours
+•Front Desk Phone # (Why not?)
+
+FLOORS. Each floor within the garage. Stores:
+•Floor number
+•Floor name (Examples: null, basement, roof)
+•Total spots on the floor
+•Available spots
+•Garage which it is a floor of (linked to parent garage)
+
+PARKING SPOTS. Definition of the individual spaces on each floor. Stores:
+•Spot ID
+•Floor (linked to parent floor)
+•Spot type (standard, handicap, staff)
+•Current Status (available, occupied, broken/out of order)
+•Physical location reference (row by column or zone or null(for small garageflow
+implementations))
+
+GATES. physical entry and exit hardware. Stores:
+•Gate ID
+•Gate type (entry or exit)
+•current status (open, closed, out of order)
+•Garage it belongs to (linked to parent garage)
+
+
+######################
+Transactional Entities (Databases)
+######################
+
+TICKETS. A ticket is created at vehicle entry and closed at exit. It represents
+ a single parking session. A ticket stores:
+•Ticket ID
+•Entry timestamp
+•Exit timestamp (null until exit)
+•Entry gate
+•Exit gate (null until exit)
+•Assigned parking spot
+•Vehicle ID
+•Ticket status: active, closed, lost, voided
+•Duration (calculated on close)
+•Total fee owed (calculated on close)
+
+PAYMENTS. Records the financial transaction tied to a closed ticket. Stores:
+•Payment ID
+•Linked ticket ID
+•Amount charged
+•Payment method (cash, card, mobile/app)
+•Payment timestamp
+•Payment status (paid, pending, failed, refunded).
+ 
+RESERVATIONS. Pre-booked parking sessions. Stores:
+•Reservation ID
+•Customer ID
+•Vehicle ID
+•Start datetime
+•End datetime
+•Reservation status(confirmed, cancelled, fulfilled, expired)
+•Creation timestamp
+•Fee quoted at time of booking.
+
+OCCUPANCY LOG. A time stamped log of spot level status changes. Stores:
+Storing parking data in this database lets us get live information
+and parking analytics / reports from the samespot.
+A time-series audit log of spot-level status changes.
+Each record stores: 
+•Spot ID
+•Timestamp of the change
+•Spot Became free or spot became occupied.
+
+###############################
+Customer Information (Databases)
+################################
+
+CUSTOMERS. Registered users. Being a registered user is only needed for
+reservations. Stores:
+•Customer ID
+•Customer personal information:
+	•name
+	•email
+	•phone number
+	•date account created
+	•account status (active/suspended/deleted)
+
+VEHICLES. Tracks vehicles associated with tickets and reservations. Stores:
+•Vehicle ID
+•License plate
+	•State / region
+	•Vehicle type (car / motorcycle/ truck)
+•Customer ID (possibly null)
+
+#######################
+Operations / Analytics (Logs and important references)
+#######################
+
+PRICING RULES. Defines are parking fees are calculated. Each parking ID relates
+to a unique payment structure. Each rate object stores:
+•Rate ID
+•Rate name (standard, weekend, event)
+•applicable hours
+•Pricing model (flat / hourly / special)
+•Description (text)
+•Program (points to a function that takes an entry and exit timestamp
+and returns a number / fee)
+
+SYSTEM EVENTS. Logs system level actions for security and debugging. Any
+part of the system can create an entry to System Events. Stores:
+•Event ID (Could be anything but should be unique and traceable. Examples. sensor
+fault, ticket voided, manual override took place)
+•Source 
+•Description field (string / text box)
+
+STAFF. Internal users. Stores:
+•Operator ID
+•Name
+•Role (admin / attendant)
+•Login credentials
