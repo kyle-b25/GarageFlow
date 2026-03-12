@@ -1,0 +1,24 @@
+Defined Tables for GarageFlow System
+
+Structure of a garage:
+• garage
+• floor
+• parking_spot
+• gate_event
+
+Users:
+• customer
+• vehicle
+• staff
+
+Parking process:
+• ticket
+• payment
+• reservation
+
+System analytics:
+• occupancy_log
+• system_event
+
+Operations:
+• pricing_rule
