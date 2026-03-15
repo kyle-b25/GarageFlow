@@ -22,3 +22,21 @@ decision making.
 ## Scope
 This project focuses on software-based occupancy tracking and reservation management.
 Sensor integration and payment processing are considered out of scope for and will be simulated.
+
+## Backend Dev Environment Instructions for Windows
+1. Create your own virtual environment. Note that the Python version is 3.14.2.
+   - python -m venv venv
+2. Install the libraries from requirements.txt
+   - pip install -r requirements.txt
+3. Create your own env file.
+   - FLASK_APP=app.py
+   - FLASK_ENV=development
+   - FLASK_DEBUG=1
+   - SECRET_KEY=yoursecretkey
+   - DATABASE_URL=sqlite:///database.db
+5. Run the database setup.
+   - python -c "from app import app, db; app.app_context().push(); db.create_all()"
+6. Run the server.
+   - flask run
+7. Verify this process worked. Visit the following link in your browser.
+   - http://127.0.0.1:5000/health
