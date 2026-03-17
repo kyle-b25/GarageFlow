@@ -11,6 +11,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 
 db = SQLAlchemy(app)
 
+import models  # noqa: E402, F401
+
 @app.route('/operator-front')
 def index():
     return render_template('index.html')
