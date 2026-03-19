@@ -14,7 +14,8 @@ db = SQLAlchemy(app)
 
 from models import (
     Floor, ParkingSpot, Vehicle, Ticket, OccupancyLog,
-    SpotStatusEnum, SpotTypeEnum, VehicleTypeEnum, TicketStatusEnum, OccupancyChangeEnum
+    SpotStatusEnum, SpotTypeEnum, VehicleTypeEnum, TicketStatusEnum, OccupancyChangeEnum,
+    Reservation, ReservationStatusEnum,
 )
 
 with app.app_context():
@@ -121,6 +122,94 @@ def post_ticket():
         response['phone'] = phone
 
     return jsonify(response), 201
+
+
+_STATUS_MAP = {
+    ReservationStatusEnum.confirmed: 'confirmed',
+    ReservationStatusEnum.fulfilled: 'complete',
+    ReservationStatusEnum.expired:   'expired',
+    ReservationStatusEnum.cancelled: 'cancelled',
+}
+
+
+@app.route('/v1/reservations', methods=['POST'])
+def post_reservation():
+    data = request.get_json(silent=True) or {}
+
+    phone            = data.get('phone')
+    scheduled_arrival = data.get('scheduledArrival')
+    driver_class     = data.get('driverClass')
+
+    # Step 1 — Validate input
+    if not phone or not scheduled_arrival:
+        missing = 'phone' if not phone else 'scheduledArrival'
+        return jsonify({'error': 'missing_required_field', 'message': f'{missing} is required'}), 400
+
+    try:
+        parsed_arrival = datetime.fromisoformat(scheduled_arrival.replace('Z', '+00:00'))
+    except (ValueError, AttributeError):
+        return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival is not a valid ISO 8601 datetime'}), 400
+
+    from datetime import timezone
+    now = datetime.now(timezone.utc)
+    if parsed_arrival <= now:
+        return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival must be in the future'}), 400
+
+    # Step 2 — Check availability
+    if not Floor.query.filter(Floor.available_spots > 0).first():
+        return jsonify({'error': 'garage_full', 'message': 'Garage is full'}), 503
+
+    # Step 3 — Find advisory floor
+    spot_type_val = _DRIVER_CLASS_TO_SPOT_TYPE.get(driver_class, SpotTypeEnum.standard)
+    spot = ParkingSpot.query.filter_by(spot_type=spot_type_val, status=SpotStatusEnum.available).first()
+    if not spot:
+        return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
+
+    floor = Floor.query.get(spot.floor_id)
+
+    # Step 4 — Create Reservation (do NOT mark spot occupied)
+    reservation = Reservation(
+        phone=phone,
+        start_datetime=parsed_arrival.replace(tzinfo=None),
+        customer_id=None,
+        vehicle_id=None,
+        floor_number=floor.floor_number,
+        status=ReservationStatusEnum.confirmed,
+    )
+    db.session.add(reservation)
+    db.session.commit()
+
+    return jsonify({
+        'reservationId':    f'R-{reservation.reservation_id:04d}',
+        'assignedFloor':    floor.floor_number,
+        'scheduledArrival': scheduled_arrival,
+        'status':           'confirmed',
+    }), 201
+
+
+@app.route('/v1/reservations', methods=['GET'])
+def get_reservations():
+    phone = request.args.get('phone')
+    if not phone:
+        return jsonify({'error': 'missing_required_field', 'message': 'phone is required'}), 400
+
+    include_old = request.args.get('includeOld', 'false').lower() == 'true'
+
+    q = Reservation.query.filter_by(phone=phone)
+    if not include_old:
+        q = q.filter_by(status=ReservationStatusEnum.confirmed)
+    reservations = q.order_by(Reservation.start_datetime).all()
+
+    result = [
+        {
+            'reservationId':    f'R-{r.reservation_id:04d}',
+            'assignedFloor':    r.floor_number if r.floor_number is not None else -1,
+            'scheduledArrival': r.start_datetime.isoformat() + 'Z',
+            'status':           _STATUS_MAP[r.status],
+        }
+        for r in reservations
+    ]
+    return jsonify(result), 200
 
 
 if __name__ == '__main__':

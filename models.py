@@ -317,6 +317,8 @@ class Reservation(db.Model):
     reservation_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     customer_id    = db.Column(db.Integer, db.ForeignKey("customer.customer_id"), nullable=True)
     vehicle_id     = db.Column(db.Integer, db.ForeignKey("vehicle.vehicle_id"),   nullable=True)
+    phone          = db.Column(db.String(20),  nullable=True)
+    floor_number   = db.Column(db.Integer,     nullable=True)
     start_datetime = db.Column(db.DateTime,  nullable=False)
     end_datetime   = db.Column(db.DateTime,  nullable=True)
     status         = db.Column(db.Enum(ReservationStatusEnum), nullable=False, default=ReservationStatusEnum.confirmed)
