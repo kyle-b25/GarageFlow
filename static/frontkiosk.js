@@ -41,7 +41,7 @@ function toISO(date, time) {
 
 function floorLabel(num) {
   if (num === -1) return 'Basement';
-  return `Floor ${num}`;
+  return `${num}`;
 }
 
 function badgeClass(status) {
