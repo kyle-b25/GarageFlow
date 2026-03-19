@@ -109,7 +109,7 @@ async function handleResFinish() {
     const result = await postReservation(phone, scheduledArrival, driverClass);
     showFeedback(
       feedback,
-      `✅ Reservation confirmed! ID: ${result.reservationId} · Floor: ${floorLabel(result.assignedFloor)}`,
+      `✅ Reservation confirmed! ID: ${result.reservationId} · Floor: ${result.assignedFloor}`,
       false
     );
     // Clear form
