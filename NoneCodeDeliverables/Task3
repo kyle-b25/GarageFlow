@@ -1,0 +1,166 @@
+# GarageFlow — Task 3: Table Column Definitions
+
+Defines the columns for each table identified in Task 2.
+Organized by the same four categories established in Task 2.
+
+---
+
+## Structure of a Garage
+
+### `garage`
+| Column | Type | Description |
+|---|---|---|
+| garage_id | INT | Unique identifier for the garage |
+| name | VARCHAR | Name of the garage |
+| total_capacity | INT | Total number of parking spots across all floors |
+| number_of_floors | INT | Number of floors in the garage |
+| operating_hours | VARCHAR | Hours of operation (e.g. "6:00am–midnight") |
+| front_desk_phone | VARCHAR | Front desk contact phone number |
+
+---
+
+### `floor`
+| Column | Type | Description |
+|---|---|---|
+| floor_id | INT | Unique identifier for the floor |
+| garage_id | INT | The garage this floor belongs to (linked to garage) |
+| floor_number | INT | Numeric position of the floor |
+| floor_name | VARCHAR | Optional label for the floor (e.g. "Basement", "Roof", null) |
+| total_spots | INT | Total number of spots on this floor |
+| available_spots | INT | Current number of available spots on this floor |
+
+---
+
+### `parking_spot`
+| Column | Type | Description |
+|---|---|---|
+| spot_id | INT | Unique identifier for the parking spot |
+| floor_id | INT | The floor this spot belongs to (linked to floor) |
+| spot_type | ENUM | Type of spot: standard, handicap, staff |
+| status | ENUM | Current status: available, occupied, out_of_order |
+| location_reference | VARCHAR | Physical location label (e.g. "A-12", "Zone B", null for small implementations) |
+
+---
+
+### `gate_event`
+| Column | Type | Description |
+|---|---|---|
+| gate_id | INT | Unique identifier for the gate |
+| garage_id | INT | The garage this gate belongs to (linked to garage) |
+| gate_type | ENUM | Type of gate: entry, exit |
+| status | ENUM | Current status: open, closed, out_of_order |
+
+---
+
+## Users
+
+### `customer`
+| Column | Type | Description |
+|---|---|---|
+| customer_id | INT | Unique identifier for the customer |
+| name | VARCHAR | Customer's full name |
+| email | VARCHAR | Customer's email address |
+| phone_number | VARCHAR | Customer's phone number |
+| date_created | TIMESTAMP | Date and time the account was created |
+| account_status | ENUM | Account state: active, suspended, deleted |
+
+---
+
+### `vehicle`
+| Column | Type | Description |
+|---|---|---|
+| vehicle_id | INT | Unique identifier for the vehicle |
+| license_plate | VARCHAR | Vehicle's license plate number |
+| plate_state | VARCHAR | State or region the plate is registered to |
+| vehicle_type | ENUM | Type of vehicle: car, motorcycle, truck |
+| customer_id | INT | Associated customer, if any (nullable — walk-up vehicles have no account) |
+
+---
+
+### `staff`
+| Column | Type | Description |
+|---|---|---|
+| operator_id | INT | Unique identifier for the staff member |
+| name | VARCHAR | Staff member's full name |
+| role | ENUM | Permission level: admin, attendant |
+| username | VARCHAR | Login username |
+| password_hash | VARCHAR | Hashed login password |
+
+---
+
+## Parking Process
+
+### `ticket`
+| Column | Type | Description |
+|---|---|---|
+| ticket_id | INT | Unique identifier for the ticket |
+| entry_timestamp | TIMESTAMP | Date and time the vehicle entered |
+| exit_timestamp | TIMESTAMP | Date and time the vehicle exited (null until exit) |
+| entry_gate_id | INT | Gate used for entry (linked to gate_event) |
+| exit_gate_id | INT | Gate used for exit, null until exit (linked to gate_event) |
+| spot_id | INT | Assigned parking spot (linked to parking_spot) |
+| vehicle_id | INT | Vehicle associated with this ticket (linked to vehicle) |
+| status | ENUM | Ticket state: active, closed, lost, voided |
+| duration | INT | Total parked duration in minutes (calculated on close, null until then) |
+| total_fee | DECIMAL | Total fee owed (calculated on close, null until then) |
+
+---
+
+### `payment`
+| Column | Type | Description |
+|---|---|---|
+| payment_id | INT | Unique identifier for the payment |
+| ticket_id | INT | The ticket this payment is tied to (linked to ticket) |
+| amount_charged | DECIMAL | Total amount charged |
+| payment_method | ENUM | Method used: cash, card, mobile |
+| payment_timestamp | TIMESTAMP | Date and time the payment was processed |
+| payment_status | ENUM | Payment state: paid, pending, failed, refunded |
+
+---
+
+### `reservation`
+| Column | Type | Description |
+|---|---|---|
+| reservation_id | INT | Unique identifier for the reservation |
+| customer_id | INT | Customer who made the reservation (linked to customer) |
+| vehicle_id | INT | Vehicle the reservation is for (linked to vehicle) |
+| start_datetime | TIMESTAMP | Reservation start date and time |
+| end_datetime | TIMESTAMP | Reservation end date and time |
+| status | ENUM | Reservation state: confirmed, cancelled, fulfilled, expired |
+| created_at | TIMESTAMP | Date and time the reservation was created |
+| quoted_fee | DECIMAL | Fee quoted at the time of booking |
+
+---
+
+## System Analytics
+
+### `occupancy_log`
+| Column | Type | Description |
+|---|---|---|
+| log_id | INT | Unique identifier for the log entry |
+| spot_id | INT | The spot that changed status (linked to parking_spot) |
+| changed_at | TIMESTAMP | Date and time the status change occurred |
+| change_type | ENUM | Direction of the change: occupied, freed |
+
+---
+
+### `system_event`
+| Column | Type | Description |
+|---|---|---|
+| event_id | INT | Unique identifier for the event |
+| source | VARCHAR | System component that generated the event (e.g. "gate_controller", "ticket_module") |
+| description | TEXT | Free-text description of what occurred |
+
+---
+
+## Operations
+
+### `pricing_rule`
+| Column | Type | Description |
+|---|---|---|
+| rate_id | INT | Unique identifier for the pricing rule |
+| rate_name | VARCHAR | Name of the rate (e.g. "standard", "weekend", "event") |
+| applicable_hours | VARCHAR | Hours during which this rate applies |
+| pricing_model | ENUM | Model type: flat, hourly, special |
+| description | TEXT | Human-readable explanation of the rule |
+| program | VARCHAR | Reference to the function/logic used to calculate the fee from entry and exit timestamps |

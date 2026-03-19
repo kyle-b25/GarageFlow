@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 from datetime import datetime
@@ -19,6 +19,11 @@ from models import (
 
 with app.app_context():
     db.create_all()
+
+
+@app.route('/operator-front')
+def index():
+    return render_template('index.html')
 
 
 @app.route('/health')
