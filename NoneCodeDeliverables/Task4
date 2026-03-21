@@ -1,0 +1,74 @@
+GarageFlow
+Task 4: Defining Primary and Foreign Keys
+
+This section defines the primary and foreign keys for each table established in Task 3
+PK: Primary Key
+FK: Foreign Key
+
+---
+
+## Structure of a Garage
+
+`garage`
+  • PK: garage_id
+
+`floor`
+  • PK: floor_id
+  • FK: garage_id -> garage(garage_id)
+
+`parking_spot`
+  • PK: spot_id
+  • FK: floor_id -> floor(floor_id)
+
+`gate_event`
+  • PK: gate_id
+  • FK: garage_id -> garage(garage_id)
+
+
+## Users
+
+`customer`
+  • PK: customer_id
+
+`vehicle`
+  • PK: vehicle_id
+  • FK: customer_id -> customer(customer_id)
+
+`staff`
+  • PK: operator_id
+
+
+## Parking Process
+
+`ticket`
+  • PK: ticket_id
+  • FK: entry_gate_id -> gate_event(gate_id)
+        exit_gate_id -> gate_event(gate_id)
+        spot_id -> parking_spot(spot_id)
+        vehicle_id -> vehicle(vehicle_id)
+
+`payment`
+  • PK: payment_id
+  • FK: ticket_id -> ticket(ticket_id)
+
+`reservation`
+  • PK: reservation_id
+  • FK: cutomer_id -> customer(customer_id)
+        vehicle_id -> vehicle(vehicle_id)
+
+
+## System Analytics
+
+`occupancy_log`
+  • PK: log_id
+  • FK: spot_id -> parking_spot(spot_id)
+
+`system_event`
+  • PK: event_id
+
+
+## Operations
+
+`pricing_rule`
+  • PK: rate_id
+
