@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 import math
 import re
@@ -12,6 +12,8 @@ load_dotenv()
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///database.db')
+app.config['SESSION_PERMANENT'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=365)
 
 db = SQLAlchemy(app)
 
@@ -317,40 +319,6 @@ def get_reservations():
     return jsonify(result), 200
 
 
-@app.route('/v1/floors', methods=['GET'])
-def get_floors():
-    # TODO: enforce staff auth (Task 23)
-    floors = Floor.query.order_by(Floor.floor_number).all()
-
-    result = []
-    for floor in floors:
-        zone_available = {}
-        zone_total = {}
-
-        for spot in floor.parking_spots:
-            loc = spot.location_reference
-            if not loc:
-                continue  # spots with no location_reference are excluded from zones
-            m = re.search(r'[A-Z]', loc)
-            zone = m.group(0) if m else '_unzoned'
-            zone_total[zone] = zone_total.get(zone, 0) + 1
-            if spot.status == SpotStatusEnum.available:
-                zone_available[zone] = zone_available.get(zone, 0) + 1
-
-        zones = {
-            z: (zone_available.get(z, 0) if zone_available.get(z, 0) > 0 else 'Full')
-            for z in sorted(zone_total)
-        }
-
-        result.append({
-            'floor': floor.floor_name if floor.floor_name else f'Floor {floor.floor_number}',
-            'total': floor.available_spots,
-            'zones': zones,
-        })
-
-    return jsonify(result), 200
-
-
 _VALID_PAYMENT_METHODS = {'cash', 'card', 'mobile'}
 _CLOSED_STATUSES = {TicketStatusEnum.closed, TicketStatusEnum.voided, TicketStatusEnum.lost}
 
@@ -416,6 +384,42 @@ def put_ticket_exit(ticket_id):
         'paymentStatus': 'pending',
         'status':        'closed',
     }), 200
+
+
+# ------------------------------------------------------------------
+#  Blueprints — imported after models to avoid circular imports
+# ------------------------------------------------------------------
+
+from auth import auth_bp
+from staff_routes import staff_bp
+
+app.register_blueprint(auth_bp)
+app.register_blueprint(staff_bp)
+
+
+# ------------------------------------------------------------------
+#  CLI commands
+# ------------------------------------------------------------------
+
+@app.cli.command('seed-admin')
+def seed_admin():
+    """Create a default admin account (username: admin, password: admin)."""
+    import bcrypt
+    from models import Staff, StaffRoleEnum
+
+    if Staff.query.filter_by(username='admin').first():
+        print('Admin account already exists — skipping.')
+        return
+
+    password_hash = bcrypt.hashpw(b'admin', bcrypt.gensalt()).decode('utf-8')
+    db.session.add(Staff(
+        name='System Admin',
+        username='admin',
+        password_hash=password_hash,
+        role=StaffRoleEnum.admin,
+    ))
+    db.session.commit()
+    print('Admin account created (username: admin, password: admin).')
 
 
 if __name__ == '__main__':
