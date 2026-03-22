@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from decimal import Decimal
 import math
+import re
 import os
 
 load_dotenv()
@@ -45,6 +46,62 @@ _DRIVER_CLASS_TO_SPOT_TYPE = {
 VALID_DRIVER_CLASSES = set(_DRIVER_CLASS_TO_SPOT_TYPE.keys())
 
 
+def assign_spot(driver_class):
+    """
+    Find the best available (spot, floor) pair for the given driver class.
+
+    Floors are sorted by availability ratio (available/total) descending,
+    tiebreak by floor_number ascending. Sorting done in Python — SQLite
+    integer division truncates and cannot be used in ORDER BY for ratios.
+
+    Returns (spot, floor) on success, or (None, None) if garage is full.
+    """
+    spot_type_val = _DRIVER_CLASS_TO_SPOT_TYPE[driver_class]
+
+    floors = [f for f in Floor.query.filter(Floor.available_spots > 0).all()
+              if f.total_spots > 0]
+    if not floors:
+        return None, None
+
+    floors.sort(key=lambda f: (-(f.available_spots / f.total_spots), f.floor_number))
+
+    for floor in floors:
+        spot = ParkingSpot.query.filter_by(
+            floor_id=floor.floor_id,
+            spot_type=spot_type_val,
+            status=SpotStatusEnum.available,
+        ).first()
+        if spot:
+            return spot, floor
+
+    return None, None
+
+
+def release_spot(spot_id, exit_ts):
+    """
+    Free a parking spot: set status to available, increment floor counter,
+    append OccupancyLog. Does NOT commit — caller owns the transaction.
+
+    Returns the ParkingSpot on success, or None if spot_id not found.
+    """
+    spot = ParkingSpot.query.get(spot_id)
+    if not spot:
+        return None
+
+    spot.status = SpotStatusEnum.available
+
+    floor = Floor.query.get(spot.floor_id)
+    if floor:
+        floor.available_spots += 1
+
+    db.session.add(OccupancyLog(
+        spot_id=spot.spot_id,
+        changed_at=exit_ts,
+        change_type=OccupancyChangeEnum.freed,
+    ))
+    return spot
+
+
 @app.route('/v1/tickets', methods=['POST'])
 def post_ticket():
     data = request.get_json(silent=True) or {}
@@ -84,8 +141,7 @@ def post_ticket():
         return jsonify({'error': 'duplicate_plate', 'message': 'Vehicle already has an active ticket'}), 409
 
     # Step 5 — Assign spot
-    spot_type_val = _DRIVER_CLASS_TO_SPOT_TYPE[driver_class]
-    spot = ParkingSpot.query.filter_by(spot_type=spot_type_val, status=SpotStatusEnum.available).first()
+    spot, floor = assign_spot(driver_class)
     if not spot:
         return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
 
@@ -96,23 +152,22 @@ def post_ticket():
         entry_timestamp=datetime.utcnow(),
         status=TicketStatusEnum.active,
     )
-    db.session.add(ticket)
-    db.session.flush()
 
-    # Step 7 — Update spot + floor
-    spot.status = SpotStatusEnum.occupied
-    floor = Floor.query.get(spot.floor_id)
-    floor.available_spots -= 1
-
-    # Step 8 — OccupancyLog
-    db.session.add(OccupancyLog(
-        spot_id=spot.spot_id,
-        changed_at=datetime.utcnow(),
-        change_type=OccupancyChangeEnum.occupied,
-    ))
-
-    # Step 9 — Commit + return 201
-    db.session.commit()
+    # Steps 7–9 — Write to DB
+    try:
+        db.session.add(ticket)
+        db.session.flush()
+        spot.status = SpotStatusEnum.occupied
+        floor.available_spots -= 1
+        db.session.add(OccupancyLog(
+            spot_id=spot.spot_id,
+            changed_at=datetime.utcnow(),
+            change_type=OccupancyChangeEnum.occupied,
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'server_error', 'message': 'Failed to create ticket'}), 500
 
     response = {
         'ticketId':     ticket.ticket_id,
@@ -207,19 +262,13 @@ def post_reservation():
     if parsed_arrival <= now:
         return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival must be in the future'}), 400
 
-    # Step 2 — Check availability
-    if not Floor.query.filter(Floor.available_spots > 0).first():
-        return jsonify({'error': 'garage_full', 'message': 'Garage is full'}), 503
-
-    # Step 3 — Find advisory floor
-    spot_type_val = _DRIVER_CLASS_TO_SPOT_TYPE.get(driver_class, SpotTypeEnum.standard)
-    spot = ParkingSpot.query.filter_by(spot_type=spot_type_val, status=SpotStatusEnum.available).first()
+    # Step 2 — Find advisory floor
+    effective_class = driver_class if driver_class in _DRIVER_CLASS_TO_SPOT_TYPE else 'standard'
+    spot, floor = assign_spot(effective_class)
     if not spot:
         return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
 
-    floor = Floor.query.get(spot.floor_id)
-
-    # Step 4 — Create Reservation (do NOT mark spot occupied)
+    # Step 3 — Create Reservation (do NOT mark spot occupied)
     reservation = Reservation(
         phone=phone,
         start_datetime=parsed_arrival.replace(tzinfo=None),
@@ -228,8 +277,12 @@ def post_reservation():
         floor_number=floor.floor_number,
         status=ReservationStatusEnum.confirmed,
     )
-    db.session.add(reservation)
-    db.session.commit()
+    try:
+        db.session.add(reservation)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'server_error', 'message': 'Failed to create reservation'}), 500
 
     return jsonify({
         'reservationId':    f'R-{reservation.reservation_id:04d}',
@@ -261,6 +314,40 @@ def get_reservations():
         }
         for r in reservations
     ]
+    return jsonify(result), 200
+
+
+@app.route('/v1/floors', methods=['GET'])
+def get_floors():
+    # TODO: enforce staff auth (Task 23)
+    floors = Floor.query.order_by(Floor.floor_number).all()
+
+    result = []
+    for floor in floors:
+        zone_available = {}
+        zone_total = {}
+
+        for spot in floor.parking_spots:
+            loc = spot.location_reference
+            if not loc:
+                continue  # spots with no location_reference are excluded from zones
+            m = re.search(r'[A-Z]', loc)
+            zone = m.group(0) if m else '_unzoned'
+            zone_total[zone] = zone_total.get(zone, 0) + 1
+            if spot.status == SpotStatusEnum.available:
+                zone_available[zone] = zone_available.get(zone, 0) + 1
+
+        zones = {
+            z: (zone_available.get(z, 0) if zone_available.get(z, 0) > 0 else 'Full')
+            for z in sorted(zone_total)
+        }
+
+        result.append({
+            'floor': floor.floor_name if floor.floor_name else f'Floor {floor.floor_number}',
+            'total': floor.available_spots,
+            'zones': zones,
+        })
+
     return jsonify(result), 200
 
 
@@ -313,18 +400,10 @@ def put_ticket_exit(ticket_id):
         payment_timestamp=exit_ts,
     ))
 
-    # Step 7 — Free spot + update floor counter
-    spot = ParkingSpot.query.get(ticket.spot_id)
-    spot.status = SpotStatusEnum.available
-    floor = Floor.query.get(spot.floor_id)
-    floor.available_spots += 1
-
-    # Step 8 — Append OccupancyLog
-    db.session.add(OccupancyLog(
-        spot_id=spot.spot_id,
-        changed_at=exit_ts,
-        change_type=OccupancyChangeEnum.freed,
-    ))
+    # Step 7 — Free spot + update floor counter + OccupancyLog
+    if not release_spot(ticket.spot_id, exit_ts):
+        db.session.rollback()
+        return jsonify({'error': 'server_error', 'message': 'Could not release spot'}), 500
 
     db.session.commit()
 
