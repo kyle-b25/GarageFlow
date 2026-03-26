@@ -25,7 +25,7 @@ _DRIVER_CLASS_TO_SPOT_TYPE = {
     'standard':      'standard',
     'accessibility': 'accessibility',
     'employee':      'staff',
-    'eco':           'standard',
+    'eco':           'staff',
 }
 
 VALID_DRIVER_CLASSES = set(_DRIVER_CLASS_TO_SPOT_TYPE.keys())
@@ -82,6 +82,29 @@ def assign_spot(driver_class):
     return None, None
 
 
+def _count_spots(spots):
+    """Tally spot counts by type. Returns (total, occupied, available, by_type dict)."""
+    from models import SpotTypeEnum, SpotStatusEnum
+
+    by_type = {}
+    for st in SpotTypeEnum:
+        by_type[st.value] = {'total': 0, 'occupied': 0, 'available': 0}
+
+    for spot in spots:
+        bucket = by_type[spot.spot_type.value]
+        bucket['total'] += 1
+        if spot.status == SpotStatusEnum.occupied:
+            bucket['occupied'] += 1
+        elif spot.status == SpotStatusEnum.available:
+            bucket['available'] += 1
+
+    total    = sum(b['total'] for b in by_type.values())
+    occupied = sum(b['occupied'] for b in by_type.values())
+    available = sum(b['available'] for b in by_type.values())
+
+    return total, occupied, available, by_type
+
+
 def _log_error(source, description):
     """Append a row to SystemEvent for auditing failures."""
     try:
@@ -118,7 +141,7 @@ def post_ticket():
 
     if driver_class not in VALID_DRIVER_CLASSES:
         return jsonify({
-            'error': 'missing_required_field',
+            'error': 'invalid_driver_class',
             'message': f'driverClass must be one of: {", ".join(sorted(VALID_DRIVER_CLASSES))}',
         }), 400
 
@@ -126,35 +149,35 @@ def post_ticket():
     if not Floor.query.filter(Floor.available_spots > 0).first():
         return jsonify({'error': 'garage_full', 'message': 'Garage is full'}), 503
 
-    # Get or create Vehicle
-    vehicle = Vehicle.query.filter_by(license_plate=license_plate).first()
-    if not vehicle:
-        vehicle = Vehicle(
-            license_plate=license_plate,
-            vehicle_type=VehicleTypeEnum.car,
-            customer_id=None,
-        )
-        db.session.add(vehicle)
-        db.session.flush()
-
-    # Duplicate active ticket check
-    if Ticket.query.filter_by(vehicle_id=vehicle.vehicle_id, status=TicketStatusEnum.active).first():
-        return jsonify({'error': 'duplicate_plate', 'message': 'Vehicle already has an active ticket'}), 409
-
-    # Assign spot
-    spot, floor = assign_spot(driver_class)
-    if not spot:
-        return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
-
-    # Create Ticket + mark spot occupied + OccupancyLog
-    ticket = Ticket(
-        vehicle_id=vehicle.vehicle_id,
-        spot_id=spot.spot_id,
-        entry_timestamp=datetime.utcnow(),
-        status=TicketStatusEnum.active,
-    )
-
     try:
+        # Get or create Vehicle
+        vehicle = Vehicle.query.filter_by(license_plate=license_plate).first()
+        if not vehicle:
+            vehicle = Vehicle(
+                license_plate=license_plate,
+                vehicle_type=VehicleTypeEnum.car,
+                customer_id=None,
+            )
+            db.session.add(vehicle)
+            db.session.flush()
+
+        # Duplicate active ticket check
+        if Ticket.query.filter_by(vehicle_id=vehicle.vehicle_id, status=TicketStatusEnum.active).first():
+            return jsonify({'error': 'duplicate_plate', 'message': 'Vehicle already has an active ticket'}), 409
+
+        # Assign spot
+        spot, floor = assign_spot(driver_class)
+        if not spot:
+            return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
+
+        # Create Ticket + mark spot occupied + OccupancyLog
+        ticket = Ticket(
+            vehicle_id=vehicle.vehicle_id,
+            spot_id=spot.spot_id,
+            entry_timestamp=datetime.utcnow(),
+            status=TicketStatusEnum.active,
+        )
+
         db.session.add(ticket)
         db.session.flush()
         spot.status = SpotStatusEnum.occupied
@@ -249,30 +272,36 @@ def post_reservation():
 
 @v1_bp.route('/reservations', methods=['GET'])
 def get_reservations():
+    from app import db
     from models import Reservation, ReservationStatusEnum
 
     phone = request.args.get('phone')
     if not phone:
         return jsonify({'error': 'missing_required_field', 'message': 'phone is required'}), 400
 
-    include_old = request.args.get('includeOld', 'false').lower() == 'true'
+    try:
+        include_old = request.args.get('includeOld', 'false').lower() == 'true'
 
-    q = Reservation.query.filter_by(phone=phone)
-    if not include_old:
-        q = q.filter_by(status=ReservationStatusEnum.confirmed)
-    reservations = q.order_by(Reservation.start_datetime).all()
+        q = Reservation.query.filter_by(phone=phone)
+        if not include_old:
+            q = q.filter_by(status=ReservationStatusEnum.confirmed)
+        reservations = q.order_by(Reservation.start_datetime).all()
 
-    status_map = _get_status_map()
-    result = [
-        {
-            'reservationId':    f'R-{r.reservation_id:04d}',
-            'assignedFloor':    r.floor_number if r.floor_number is not None else -1,
-            'scheduledArrival': r.start_datetime.isoformat() + 'Z',
-            'status':           status_map[r.status],
-        }
-        for r in reservations
-    ]
-    return jsonify(result), 200
+        status_map = _get_status_map()
+        result = [
+            {
+                'reservationId':    f'R-{r.reservation_id:04d}',
+                'assignedFloor':    r.floor_number if r.floor_number is not None else -1,
+                'scheduledArrival': r.start_datetime.isoformat() + 'Z',
+                'status':           status_map[r.status],
+            }
+            for r in reservations
+        ]
+        return jsonify(result), 200
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('routes.get_reservations', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch reservations'}), 500
 
 
 # ------------------------------------------------------------------
@@ -281,37 +310,43 @@ def get_reservations():
 
 @v1_bp.route('/floors', methods=['GET'])
 def get_floors():
+    from app import db
     from models import Floor, SpotStatusEnum
 
-    floors = Floor.query.order_by(Floor.floor_number).all()
-    result = []
+    try:
+        floors = Floor.query.order_by(Floor.floor_number).all()
+        result = []
 
-    for floor in floors:
-        zone_available = {}
-        zone_total     = {}
+        for floor in floors:
+            zone_available = {}
+            zone_total     = {}
 
-        for spot in floor.parking_spots:
-            loc = spot.location_reference
-            if not loc:
-                continue
-            m    = re.search(r'[A-Z]', loc)
-            zone = m.group(0) if m else '_unzoned'
-            zone_total[zone] = zone_total.get(zone, 0) + 1
-            if spot.status == SpotStatusEnum.available:
-                zone_available[zone] = zone_available.get(zone, 0) + 1
+            for spot in floor.parking_spots:
+                loc = spot.location_reference
+                if not loc:
+                    continue
+                m    = re.search(r'[A-Z]', loc)
+                zone = m.group(0) if m else '_unzoned'
+                zone_total[zone] = zone_total.get(zone, 0) + 1
+                if spot.status == SpotStatusEnum.available:
+                    zone_available[zone] = zone_available.get(zone, 0) + 1
 
-        zones = {
-            z: (zone_available.get(z, 0) if zone_available.get(z, 0) > 0 else 'Full')
-            for z in sorted(zone_total)
-        }
+            zones = {
+                z: (zone_available.get(z, 0) if zone_available.get(z, 0) > 0 else 'Full')
+                for z in sorted(zone_total)
+            }
 
-        result.append({
-            'floor': floor.floor_name if floor.floor_name else f'Floor {floor.floor_number}',
-            'total': floor.available_spots,
-            'zones': zones,
-        })
+            result.append({
+                'floor': floor.floor_name if floor.floor_name else f'Floor {floor.floor_number}',
+                'total': floor.available_spots,
+                'zones': zones,
+            })
 
-    return jsonify(result), 200
+        return jsonify(result), 200
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('routes.get_floors', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch floors'}), 500
 
 
 # ------------------------------------------------------------------
@@ -321,26 +356,11 @@ def get_floors():
 @v1_bp.route('/capacity', methods=['GET'])
 def get_capacity():
     from app import db
-    from models import ParkingSpot, SpotTypeEnum, SpotStatusEnum
+    from models import ParkingSpot
 
     try:
         spots = ParkingSpot.query.all()
-
-        by_type = {}
-        for st in SpotTypeEnum:
-            by_type[st.value] = {'total': 0, 'occupied': 0, 'available': 0}
-
-        for spot in spots:
-            bucket = by_type[spot.spot_type.value]
-            bucket['total'] += 1
-            if spot.status == SpotStatusEnum.occupied:
-                bucket['occupied'] += 1
-            elif spot.status == SpotStatusEnum.available:
-                bucket['available'] += 1
-
-        total    = sum(b['total'] for b in by_type.values())
-        occupied = sum(b['occupied'] for b in by_type.values())
-        available = sum(b['available'] for b in by_type.values())
+        total, occupied, available, by_type = _count_spots(spots)
 
         return jsonify({
             'total': total,
@@ -351,7 +371,7 @@ def get_capacity():
     except Exception as exc:
         db.session.rollback()
         _log_error('routes.get_capacity', str(exc))
-        return jsonify({'error': 'server_error'}), 500
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch capacity'}), 500
 
 
 # ------------------------------------------------------------------
@@ -374,7 +394,7 @@ def get_capacity_status():
     except Exception as exc:
         db.session.rollback()
         _log_error('routes.get_capacity_status', str(exc))
-        return jsonify({'error': 'server_error'}), 500
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch capacity status'}), 500
 
 
 # ------------------------------------------------------------------
@@ -384,7 +404,7 @@ def get_capacity_status():
 @v1_bp.route('/capacity/floors/<int:floorId>', methods=['GET'])
 def get_capacity_floor(floorId):
     from app import db
-    from models import Floor, ParkingSpot, SpotTypeEnum, SpotStatusEnum
+    from models import Floor, ParkingSpot
 
     try:
         floor = Floor.query.filter_by(floor_id=floorId).first()
@@ -392,22 +412,7 @@ def get_capacity_floor(floorId):
             return jsonify({'error': 'floor_not_found'}), 404
 
         spots = ParkingSpot.query.filter_by(floor_id=floorId).all()
-
-        by_type = {}
-        for st in SpotTypeEnum:
-            by_type[st.value] = {'total': 0, 'occupied': 0, 'available': 0}
-
-        for spot in spots:
-            bucket = by_type[spot.spot_type.value]
-            bucket['total'] += 1
-            if spot.status == SpotStatusEnum.occupied:
-                bucket['occupied'] += 1
-            elif spot.status == SpotStatusEnum.available:
-                bucket['available'] += 1
-
-        total    = sum(b['total'] for b in by_type.values())
-        occupied = sum(b['occupied'] for b in by_type.values())
-        available = sum(b['available'] for b in by_type.values())
+        total, occupied, available, by_type = _count_spots(spots)
 
         return jsonify({
             'floorId': floor.floor_id,
@@ -420,4 +425,4 @@ def get_capacity_floor(floorId):
     except Exception as exc:
         db.session.rollback()
         _log_error('routes.get_capacity_floor', str(exc))
-        return jsonify({'error': 'server_error'}), 500
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch floor capacity'}), 500

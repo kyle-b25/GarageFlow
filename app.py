@@ -37,6 +37,16 @@ def health():
 
 
 
+def _log_error(source, description):
+    """Append a row to SystemEvent for auditing failures."""
+    try:
+        from models import SystemEvent
+        db.session.add(SystemEvent(source=source, description=description))
+        db.session.commit()
+    except Exception:
+        pass
+
+
 def release_spot(spot_id, exit_ts):
     """
     Free a parking spot: set status to available, increment floor counter,
@@ -92,24 +102,35 @@ def get_tickets():
         except KeyError:
             valid = [s.value for s in TicketStatusEnum]
             return jsonify({'error': 'invalid_status', 'message': f'status must be one of: {", ".join(valid)}'}), 400
-    if plate_param:
-        vehicle = Vehicle.query.filter(
-            Vehicle.license_plate.ilike(plate_param)
-        ).first()
-        if not vehicle:
-            return jsonify([]), 200
-        q = q.filter_by(vehicle_id=vehicle.vehicle_id)
 
-    tickets = q.order_by(Ticket.entry_timestamp.desc()).all()
-    return jsonify([_ticket_json(t) for t in tickets]), 200
+    try:
+        if plate_param:
+            vehicle = Vehicle.query.filter(
+                Vehicle.license_plate.ilike(plate_param)
+            ).first()
+            if not vehicle:
+                return jsonify([]), 200
+            q = q.filter_by(vehicle_id=vehicle.vehicle_id)
+
+        tickets = q.order_by(Ticket.entry_timestamp.desc()).all()
+        return jsonify([_ticket_json(t) for t in tickets]), 200
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('app.get_tickets', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch tickets'}), 500
 
 
 @app.route('/v1/tickets/<int:ticket_id>', methods=['GET'])
 def get_ticket(ticket_id):
-    ticket = Ticket.query.get(ticket_id)
-    if not ticket:
-        return jsonify({'error': 'ticket_not_found', 'message': 'No ticket found with that ID'}), 404
-    return jsonify(_ticket_json(ticket)), 200
+    try:
+        ticket = Ticket.query.get(ticket_id)
+        if not ticket:
+            return jsonify({'error': 'ticket_not_found', 'message': 'No ticket found with that ID'}), 404
+        return jsonify(_ticket_json(ticket)), 200
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('app.get_ticket', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch ticket'}), 500
 
 
 
@@ -167,7 +188,12 @@ def put_ticket_exit(ticket_id):
         db.session.rollback()
         return jsonify({'error': 'server_error', 'message': 'Could not release spot'}), 500
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('app.put_ticket_exit', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to process exit'}), 500
 
     return jsonify({
         'ticketId':      ticket.ticket_id,
