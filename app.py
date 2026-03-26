@@ -1,3 +1,9 @@
+"""
+app.py — GarageFlow Main Application Entry Point
+
+Creates the Flask app, registers all blueprints, and contains the
+ticket read/exit endpoints and the release_spot helper.
+"""
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
