@@ -53,9 +53,8 @@ async function _request(method, path, body = null) {
  * @param {string} [phone]       — optional, walk-up customers may omit
  *
  * @returns {Promise<{
- *   ticketId: string,
+ *   ticketId: number,
  *   licensePlate: string,
- *   phone?: string,
  *   assignedFloor: number,
  *   entryTime: string,   // ISO 8601
  *   status: "active"
@@ -107,13 +106,13 @@ export async function postReservation(phone, scheduledArrival, driverClass = nul
  * Search reservations by phone number.
  *
  * @param {string}  phone       — phone number to look up
- * @param {boolean} includeOld  — include "complete" records (default false)
+ * @param {boolean} includeOld  — include fulfilled, expired, and cancelled records (default false)
  *
  * @returns {Promise<Array<{
  *   reservationId: string,
  *   assignedFloor: number,
  *   scheduledArrival: string,
- *   status: "confirmed"|"complete"
+ *   status: "confirmed"|"complete"|"expired"|"cancelled"
  * }>>}
  */
 export async function getReservationsByPhone(phone, includeOld = false) {

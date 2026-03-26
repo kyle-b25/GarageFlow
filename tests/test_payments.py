@@ -135,6 +135,7 @@ class TestCreatePayment:
             'ticketId': 9999, 'paymentIntentId': 'pi_x',
         })
         assert resp.status_code == 404
+        assert resp.get_json()['error'] == 'ticket_not_found'
 
     def test_ticket_not_closed(self, client, seed_data):
         with app.app_context():
@@ -161,18 +162,16 @@ class TestCreatePayment:
                 'paymentIntentId': 'pi_dup',
             })
         assert resp.status_code == 409
+        assert resp.get_json()['error'] == 'duplicate_payment'
 
     def test_stripe_retrieve_error(self, client, seed_data):
+        import stripe as _stripe
         with patch('stripe.PaymentIntent.retrieve',
-                   side_effect=Exception('connection error')):
-            # stripe.error.StripeError inherits from Exception
-            import stripe as _stripe
-            with patch('stripe.PaymentIntent.retrieve',
-                       side_effect=_stripe.error.StripeError('bad')):
-                resp = client.post('/v1/payments', json={
-                    'ticketId': seed_data['ticket_id'],
-                    'paymentIntentId': 'pi_bad',
-                })
+                   side_effect=_stripe.error.StripeError('bad')):
+            resp = client.post('/v1/payments', json={
+                'ticketId': seed_data['ticket_id'],
+                'paymentIntentId': 'pi_bad',
+            })
         assert resp.status_code == 502
         assert resp.get_json()['error'] == 'stripe_error'
 
@@ -307,7 +306,7 @@ class TestRefundPayment:
 
 class TestPaymentReports:
 
-    def test_happy_path(self, client, seed_data):
+    def test_happy_path(self, client, seed_data, admin_session):
         _make_payment(client, seed_data)
         start = (datetime.utcnow() - timedelta(days=1)).isoformat() + 'Z'
         end = (datetime.utcnow() + timedelta(days=1)).isoformat() + 'Z'
@@ -319,26 +318,33 @@ class TestPaymentReports:
         assert body['paidCount'] == 1
         assert body['totalRevenue'] == 9.0
 
-    def test_empty_range(self, client, seed_data):
+    def test_empty_range(self, client, seed_data, admin_session):
         start = '2000-01-01T00:00:00Z'
         end = '2000-01-02T00:00:00Z'
         resp = client.get(f'/v1/payments/reports?start={start}&end={end}')
         assert resp.status_code == 200
         assert resp.get_json()['totalPayments'] == 0
 
-    def test_missing_start(self, client, seed_data):
+    def test_missing_start(self, client, seed_data, admin_session):
         resp = client.get('/v1/payments/reports?end=2030-01-01T00:00:00Z')
         assert resp.status_code == 400
         assert resp.get_json()['error'] == 'missing_required_field'
 
-    def test_missing_end(self, client, seed_data):
+    def test_missing_end(self, client, seed_data, admin_session):
         resp = client.get('/v1/payments/reports?start=2020-01-01T00:00:00Z')
         assert resp.status_code == 400
         assert resp.get_json()['error'] == 'missing_required_field'
 
-    def test_invalid_date_format(self, client, seed_data):
+    def test_invalid_date_format(self, client, seed_data, admin_session):
         resp = client.get('/v1/payments/reports?start=not-a-date&end=also-bad')
         assert resp.status_code == 400
+
+    def test_unauthenticated(self, client, seed_data):
+        start = '2020-01-01T00:00:00Z'
+        end = '2030-01-01T00:00:00Z'
+        resp = client.get(f'/v1/payments/reports?start={start}&end={end}')
+        assert resp.status_code == 401
+        assert resp.get_json()['error'] == 'unauthorized'
 
 
 # ======================================================================
@@ -361,17 +367,16 @@ class TestOverridePayment:
         assert body['amountCharged'] == 15.0
         assert body['paymentStatus'] == 'pending'
 
-    def test_insufficient_permissions(self, client, seed_data):
+    def test_unauthenticated(self, client, seed_data):
         _make_payment(client, seed_data)
         with app.app_context():
             pid = Payment.query.first().payment_id
 
-        # No session at all
         resp = client.post(f'/v1/payments/{pid}/override', json={
             'amountCharged': 1.00,
         })
-        assert resp.status_code == 403
-        assert resp.get_json()['error'] == 'insufficient_permissions'
+        assert resp.status_code == 401
+        assert resp.get_json()['error'] == 'unauthorized'
 
     def test_attendant_rejected(self, client, seed_data):
         _make_payment(client, seed_data)

@@ -10,14 +10,14 @@ The four endpoints the operator kiosk frontend depends on:
 No authentication required.  Registered in app.py as v1_bp.
 """
 
-import math
 import os
 import re
-from datetime import datetime, timezone
-from decimal import Decimal
+from datetime import datetime
 
 import stripe
 from flask import Blueprint, request, jsonify
+
+from utils import log_error, calculate_duration, calculate_fee
 
 v1_bp = Blueprint('v1', __name__, url_prefix='/v1')
 
@@ -112,17 +112,6 @@ def _count_spots(spots):
     return total, occupied, available, by_type
 
 
-def _log_error(source, description):
-    """Append a row to SystemEvent for auditing failures."""
-    try:
-        from app import db
-        from models import SystemEvent
-        db.session.add(SystemEvent(source=source, description=description))
-        db.session.commit()
-    except Exception:
-        pass  # best-effort logging
-
-
 # ------------------------------------------------------------------
 #  POST /v1/tickets
 # ------------------------------------------------------------------
@@ -197,20 +186,16 @@ def post_ticket():
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_error('routes.post_ticket', str(exc))
+        log_error('routes.post_ticket', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to create ticket'}), 500
 
-    response = {
+    return jsonify({
         'ticketId':      ticket.ticket_id,
         'licensePlate':  license_plate,
         'assignedFloor': floor.floor_number,
         'entryTime':     ticket.entry_timestamp.isoformat() + 'Z',
         'status':        'active',
-    }
-    if phone:
-        response['phone'] = phone
-
-    return jsonify(response), 201
+    }), 201
 
 
 # ------------------------------------------------------------------
@@ -238,8 +223,8 @@ def post_reservation():
     except (ValueError, AttributeError):
         return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival is not a valid ISO 8601 datetime'}), 400
 
-    now = datetime.now(timezone.utc)
-    if parsed_arrival <= now:
+    now = datetime.utcnow()
+    if parsed_arrival.replace(tzinfo=None) <= now:
         return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival must be in the future'}), 400
 
     # Find advisory floor
@@ -262,7 +247,7 @@ def post_reservation():
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_error('routes.post_reservation', str(exc))
+        log_error('routes.post_reservation', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to create reservation'}), 500
 
     return jsonify({
@@ -307,7 +292,7 @@ def get_reservations():
         return jsonify(result), 200
     except Exception as exc:
         db.session.rollback()
-        _log_error('routes.get_reservations', str(exc))
+        log_error('routes.get_reservations', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch reservations'}), 500
 
 
@@ -352,7 +337,7 @@ def get_floors():
         return jsonify(result), 200
     except Exception as exc:
         db.session.rollback()
-        _log_error('routes.get_floors', str(exc))
+        log_error('routes.get_floors', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch floors'}), 500
 
 
@@ -377,7 +362,7 @@ def get_capacity():
         }), 200
     except Exception as exc:
         db.session.rollback()
-        _log_error('routes.get_capacity', str(exc))
+        log_error('routes.get_capacity', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch capacity'}), 500
 
 
@@ -400,7 +385,7 @@ def get_capacity_status():
         return jsonify(counts), 200
     except Exception as exc:
         db.session.rollback()
-        _log_error('routes.get_capacity_status', str(exc))
+        log_error('routes.get_capacity_status', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch capacity status'}), 500
 
 
@@ -431,7 +416,7 @@ def get_capacity_floor(floorId):
         }), 200
     except Exception as exc:
         db.session.rollback()
-        _log_error('routes.get_capacity_floor', str(exc))
+        log_error('routes.get_capacity_floor', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch floor capacity'}), 500
 
 
@@ -440,19 +425,20 @@ def get_capacity_floor(floorId):
 # ------------------------------------------------------------------
 
 def _is_duplicate_event(event_id):
-    """Check if a Stripe event has already been processed."""
+    """Check if a Stripe event has already been processed (exact match)."""
     from app import db
     from models import SystemEvent
 
-    existing = SystemEvent.query.filter_by(source='stripe_webhook').filter(
-        SystemEvent.description.contains(event_id)
+    existing = SystemEvent.query.filter_by(
+        source='stripe_webhook',
+        description=event_id,
     ).first()
     if existing:
         return True
 
     db.session.add(SystemEvent(
         source='stripe_webhook',
-        description=f'Processing event {event_id}',
+        description=event_id,
     ))
     db.session.commit()
     return False
@@ -472,7 +458,7 @@ def _handle_payment_succeeded(intent_data):
         intent_id = intent_data['id']
         payment = _find_payment_by_intent(intent_id)
         if not payment:
-            _log_error('stripe_webhook', f'No payment found for intent {intent_id}')
+            log_error('stripe_webhook', f'No payment found for intent {intent_id}')
             return
 
         payment.payment_status = PaymentStatusEnum.paid
@@ -481,17 +467,14 @@ def _handle_payment_succeeded(intent_data):
         if ticket.status == TicketStatusEnum.active:
             if not ticket.exit_timestamp:
                 ticket.exit_timestamp = datetime.utcnow()
-            duration_minutes = math.ceil(
-                (ticket.exit_timestamp - ticket.entry_timestamp).total_seconds() / 60
-            )
-            ticket.duration = duration_minutes
-            ticket.total_fee = Decimal('5.00') + Decimal('2.00') * math.ceil(duration_minutes / 60)
+            ticket.duration = calculate_duration(ticket.entry_timestamp, ticket.exit_timestamp)
+            ticket.total_fee = calculate_fee(ticket.duration)
             ticket.status = TicketStatusEnum.closed
 
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_error('stripe_webhook.payment_succeeded', str(exc))
+        log_error('stripe_webhook.payment_succeeded', str(exc))
 
 
 def _handle_payment_failed(intent_data):
@@ -502,7 +485,7 @@ def _handle_payment_failed(intent_data):
         intent_id = intent_data['id']
         payment = _find_payment_by_intent(intent_id)
         if not payment:
-            _log_error('stripe_webhook', f'No payment found for intent {intent_id}')
+            log_error('stripe_webhook', f'No payment found for intent {intent_id}')
             return
 
         payment.payment_status = PaymentStatusEnum.failed
@@ -515,7 +498,7 @@ def _handle_payment_failed(intent_data):
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_error('stripe_webhook.payment_failed', str(exc))
+        log_error('stripe_webhook.payment_failed', str(exc))
 
 
 def _handle_payment_canceled(intent_data):
@@ -526,10 +509,13 @@ def _handle_payment_canceled(intent_data):
         intent_id = intent_data['id']
         payment = _find_payment_by_intent(intent_id)
         if not payment:
-            _log_error('stripe_webhook', f'No payment found for intent {intent_id}')
+            log_error('stripe_webhook', f'No payment found for intent {intent_id}')
             return
 
         payment.payment_status = PaymentStatusEnum.failed
+        if not payment.ticket:
+            log_error('stripe_webhook', f'Payment {payment.payment_id} has no linked ticket')
+            return
         payment.ticket.status = TicketStatusEnum.voided
 
         db.session.add(SystemEvent(
@@ -539,7 +525,7 @@ def _handle_payment_canceled(intent_data):
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_error('stripe_webhook.payment_canceled', str(exc))
+        log_error('stripe_webhook.payment_canceled', str(exc))
 
 
 def _handle_charge_refunded(charge_data):
@@ -549,12 +535,12 @@ def _handle_charge_refunded(charge_data):
     try:
         intent_id = charge_data.get('payment_intent')
         if not intent_id:
-            _log_error('stripe_webhook', 'charge.refunded event missing payment_intent')
+            log_error('stripe_webhook', 'charge.refunded event missing payment_intent')
             return
 
         payment = _find_payment_by_intent(intent_id)
         if not payment:
-            _log_error('stripe_webhook', f'No payment found for intent {intent_id}')
+            log_error('stripe_webhook', f'No payment found for intent {intent_id}')
             return
 
         payment.payment_status = PaymentStatusEnum.refunded
@@ -566,7 +552,7 @@ def _handle_charge_refunded(charge_data):
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_error('stripe_webhook.charge_refunded', str(exc))
+        log_error('stripe_webhook.charge_refunded', str(exc))
 
 
 # ------------------------------------------------------------------
@@ -582,7 +568,7 @@ def stripe_webhook():
     sig_header = request.headers.get('Stripe-Signature')
 
     if not STRIPE_WEBHOOK_SECRET:
-        _log_error('stripe_webhook', 'STRIPE_WEBHOOK_SECRET not configured')
+        log_error('stripe_webhook', 'STRIPE_WEBHOOK_SECRET not configured')
         return jsonify({'error': 'webhook_not_configured'}), 500
 
     try:
@@ -609,6 +595,6 @@ def stripe_webhook():
             _handle_charge_refunded(event_data)
     except Exception as exc:
         db.session.rollback()
-        _log_error('stripe_webhook', f'Handler error for {event_type}: {exc}')
+        log_error('stripe_webhook', f'Handler error for {event_type}: {exc}')
 
     return jsonify({'status': 'ok'}), 200

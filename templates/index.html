@@ -315,41 +315,10 @@
     <div class="panel" id="panel-floor">
       <div class="panel-title">Floor Overview</div>
 
-      <div class="floor-grid">
-
-        <div class="floor-selector">
-          <div class="field" style="margin-bottom:0">
-            <label for="floor-select">Select Floor</label>
-            <div class="select-wrap">
-              <select id="floor-select">
-                <option>Floor 1</option>
-                <option>Floor 2</option>
-                <option>Floor 3</option>
-              </select>
-            </div>
-          </div>
-          <button class="btn btn-secondary" id="btn-floor-show" style="width:100%;">Show Area</button>
-        </div>
-
-        <div class="zone-card">
-          <div class="zone-card-title">Floor 2</div>
-          <div class="zone-row"><span class="zone-key">Total</span><span class="zone-val" id="f2-total">—</span></div>
-          <div class="zone-row"><span class="zone-key">Zone A</span><span class="zone-val" id="f2-a">—</span></div>
-          <div class="zone-row"><span class="zone-key">Zone B</span><span class="zone-val" id="f2-b">—</span></div>
-          <div class="zone-row"><span class="zone-key">Zone C</span><span class="zone-val" id="f2-c">—</span></div>
-          <div class="zone-row"><span class="zone-key">Zone D</span><span class="zone-val" id="f2-d">—</span></div>
-        </div>
-
-        <div class="zone-card">
-          <div class="zone-card-title">Floor 3</div>
-          <div class="zone-row"><span class="zone-key">Total</span><span class="zone-val" id="f3-total">—</span></div>
-          <div class="zone-row"><span class="zone-key">Zone A</span><span class="zone-val" id="f3-a">—</span></div>
-          <div class="zone-row"><span class="zone-key">Zone B</span><span class="zone-val" id="f3-b">—</span></div>
-          <div class="zone-row"><span class="zone-key">Zone C</span><span class="zone-val" id="f3-c">—</span></div>
-          <div class="zone-row"><span class="zone-key">Zone D</span><span class="zone-val" id="f3-d">—</span></div>
-        </div>
-
+      <div style="margin-bottom:14px;">
+        <button class="btn btn-secondary" id="btn-floor-show">Load Floor Data</button>
       </div>
+      <div id="floor-cards" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px;"></div>
     </div>
 
     <!-- ── Parking Reservation Entry ── -->

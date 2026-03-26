@@ -2,14 +2,14 @@ from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from decimal import Decimal
-import math
 import os
+
+from utils import log_error, calculate_duration, calculate_fee
 
 load_dotenv()
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY') or os.urandom(32)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///database.db')
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=365)
@@ -35,16 +35,6 @@ def index():
 def health():
     return {'status': 'ok'}
 
-
-
-def _log_error(source, description):
-    """Append a row to SystemEvent for auditing failures."""
-    try:
-        from models import SystemEvent
-        db.session.add(SystemEvent(source=source, description=description))
-        db.session.commit()
-    except Exception:
-        pass
 
 
 def release_spot(spot_id, exit_ts):
@@ -75,8 +65,14 @@ def release_spot(spot_id, exit_ts):
 
 def _ticket_json(ticket):
     spot = ParkingSpot.query.get(ticket.spot_id)
-    floor = Floor.query.get(spot.floor_id)
+    floor = Floor.query.get(spot.floor_id) if spot else None
     vehicle = Vehicle.query.get(ticket.vehicle_id)
+    if not spot or not floor or not vehicle:
+        return {
+            'ticketId': ticket.ticket_id,
+            'error': 'incomplete_record',
+            'status': ticket.status.value,
+        }
     return {
         'ticketId':     ticket.ticket_id,
         'licensePlate': vehicle.license_plate,
@@ -116,7 +112,7 @@ def get_tickets():
         return jsonify([_ticket_json(t) for t in tickets]), 200
     except Exception as exc:
         db.session.rollback()
-        _log_error('app.get_tickets', str(exc))
+        log_error('app.get_tickets', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch tickets'}), 500
 
 
@@ -129,7 +125,7 @@ def get_ticket(ticket_id):
         return jsonify(_ticket_json(ticket)), 200
     except Exception as exc:
         db.session.rollback()
-        _log_error('app.get_ticket', str(exc))
+        log_error('app.get_ticket', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch ticket'}), 500
 
 
@@ -169,9 +165,8 @@ def put_ticket_exit(ticket_id):
     # Step 5 — Stamp exit + calculate duration/fee
     exit_ts = datetime.utcnow()
     ticket.exit_timestamp = exit_ts
-    duration_minutes = math.ceil((exit_ts - ticket.entry_timestamp).total_seconds() / 60)
-    ticket.duration = duration_minutes
-    ticket.total_fee = Decimal('5.00') + Decimal('2.00') * math.ceil(duration_minutes / 60)
+    ticket.duration = calculate_duration(ticket.entry_timestamp, exit_ts)
+    ticket.total_fee = calculate_fee(ticket.duration)
     ticket.status = TicketStatusEnum.closed
 
     # Step 6 — Create Payment
@@ -192,7 +187,7 @@ def put_ticket_exit(ticket_id):
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_error('app.put_ticket_exit', str(exc))
+        log_error('app.put_ticket_exit', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to process exit'}), 500
 
     return jsonify({

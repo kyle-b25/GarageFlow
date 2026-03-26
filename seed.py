@@ -9,7 +9,7 @@ with app.app_context():
     # Garage
     garage = Garage(
         name="GarageFlow Main",
-        total_capacity=10,
+        total_capacity=5,
         number_of_floors=1,
         operating_hours="6:00am-midnight",
         front_desk_phone="555-0100",
@@ -22,8 +22,8 @@ with app.app_context():
         garage_id=garage.garage_id,
         floor_number=1,
         floor_name="Ground",
-        total_spots=10,
-        available_spots=10,
+        total_spots=5,
+        available_spots=5,
     )
     db.session.add(floor)
     db.session.flush()

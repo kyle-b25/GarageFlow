@@ -20,22 +20,16 @@ from decimal import Decimal
 import stripe
 from flask import Blueprint, request, jsonify, session
 
-payments_bp = Blueprint('payments', __name__, url_prefix='/v1/payments')
+from utils import log_error, login_required, admin_required
 
-stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
+payments_bp = Blueprint('payments', __name__, url_prefix='/v1/payments')
 
 SOURCE = 'payments_module'
 
 
-def _log_event(description):
-    """Append a row to SystemEvent for audit logging."""
-    try:
-        from app import db
-        from models import SystemEvent
-        db.session.add(SystemEvent(source=SOURCE, description=description))
-        db.session.commit()
-    except Exception:
-        pass
+def _ensure_stripe_key():
+    if not stripe.api_key:
+        stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 
 
 def _payment_json(payment):
@@ -76,7 +70,7 @@ def create_payment():
 
     ticket = Ticket.query.get(ticket_id)
     if not ticket:
-        return jsonify({'error': 'payment_not_found',
+        return jsonify({'error': 'ticket_not_found',
                         'message': 'Ticket not found'}), 404
 
     if ticket.status != TicketStatusEnum.closed:
@@ -84,16 +78,17 @@ def create_payment():
                         'message': 'Ticket must be closed before payment'}), 409
 
     if ticket.payment:
-        return jsonify({'error': 'ticket_not_closed',
+        return jsonify({'error': 'duplicate_payment',
                         'message': 'Ticket already has a payment record'}), 409
 
+    _ensure_stripe_key()
     try:
         intent = stripe.PaymentIntent.retrieve(payment_intent_id)
     except stripe.error.StripeError as exc:
         return jsonify({'error': 'stripe_error',
                         'message': str(exc)}), 502
 
-    amount = Decimal(str(intent.amount_received / 100))
+    amount = Decimal(intent.amount_received) / Decimal(100)
 
     payment = Payment(
         ticket_id=ticket.ticket_id,
@@ -109,8 +104,8 @@ def create_payment():
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_event(f'Failed to create payment: {exc}')
-        return jsonify({'error': 'stripe_error',
+        log_error(SOURCE,f'Failed to create payment: {exc}')
+        return jsonify({'error': 'server_error',
                         'message': 'Failed to save payment'}), 500
 
     return jsonify(_payment_json(payment)), 201
@@ -121,6 +116,7 @@ def create_payment():
 # ------------------------------------------------------------------
 
 @payments_bp.route('/reports', methods=['GET'])
+@login_required
 def payment_reports():
     from app import db
     from models import Payment, PaymentStatusEnum
@@ -137,7 +133,7 @@ def payment_reports():
         start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00')).replace(tzinfo=None)
         end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00')).replace(tzinfo=None)
     except (ValueError, AttributeError):
-        return jsonify({'error': 'missing_required_field',
+        return jsonify({'error': 'invalid_parameter',
                         'message': 'start and end must be valid ISO 8601 datetimes'}), 400
 
     try:
@@ -170,8 +166,8 @@ def payment_reports():
         }), 200
     except Exception as exc:
         db.session.rollback()
-        _log_event(f'Failed to generate report: {exc}')
-        return jsonify({'error': 'stripe_error',
+        log_error(SOURCE,f'Failed to generate report: {exc}')
+        return jsonify({'error': 'server_error',
                         'message': 'Failed to generate report'}), 500
 
 
@@ -210,17 +206,12 @@ def list_payments():
         return jsonify(_payment_json(payment)), 200
 
     if plate:
-        vehicle = Vehicle.query.filter(Vehicle.license_plate.ilike(plate)).first()
-        if not vehicle:
-            return jsonify([]), 200
-
-        ticket_ids = [t.ticket_id for t in
-                      Ticket.query.filter_by(vehicle_id=vehicle.vehicle_id).all()]
-        if not ticket_ids:
-            return jsonify([]), 200
-
-        payments = Payment.query.filter(Payment.ticket_id.in_(ticket_ids)) \
-            .order_by(Payment.payment_timestamp.desc()).all()
+        payments = Payment.query \
+            .join(Ticket, Payment.ticket_id == Ticket.ticket_id) \
+            .join(Vehicle, Ticket.vehicle_id == Vehicle.vehicle_id) \
+            .filter(Vehicle.license_plate.ilike(plate)) \
+            .order_by(Payment.payment_timestamp.desc()) \
+            .all()
         return jsonify([_payment_json(p) for p in payments]), 200
 
     return jsonify({'error': 'missing_required_field',
@@ -246,12 +237,17 @@ def refund_payment(payment_id):
                         'message': 'Payment has already been refunded'}), 409
 
     if not payment.stripe_payment_intent_id:
-        return jsonify({'error': 'stripe_error',
+        return jsonify({'error': 'refund_not_possible',
                         'message': 'No Stripe PaymentIntent associated with this payment'}), 400
 
     data = request.get_json(silent=True) or {}
     amount = data.get('amount')
 
+    if amount is not None and Decimal(str(amount)) > payment.amount_charged:
+        return jsonify({'error': 'invalid_amount',
+                        'message': 'Refund amount exceeds the original charge'}), 400
+
+    _ensure_stripe_key()
     try:
         refund_kwargs = {'payment_intent': payment.stripe_payment_intent_id}
         if amount is not None:
@@ -268,11 +264,16 @@ def refund_payment(payment_id):
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_event(f'Failed to update refund status: {exc}')
-        return jsonify({'error': 'stripe_error',
+        log_error(SOURCE,f'Failed to update refund status: {exc}')
+        return jsonify({'error': 'server_error',
                         'message': 'Refund succeeded but failed to update local record'}), 500
 
-    _log_event(f'Refund processed for payment {payment_id}')
+    try:
+        from models import SystemEvent
+        db.session.add(SystemEvent(source=SOURCE, description=f'Refund processed for payment {payment_id}'))
+        db.session.commit()
+    except Exception:
+        pass
     return jsonify(_payment_json(payment)), 200
 
 
@@ -281,13 +282,10 @@ def refund_payment(payment_id):
 # ------------------------------------------------------------------
 
 @payments_bp.route('/<int:payment_id>/override', methods=['POST'])
+@admin_required
 def override_payment(payment_id):
     from app import db
     from models import Payment, PaymentStatusEnum, PaymentMethodEnum
-
-    if session.get('role') != 'admin':
-        return jsonify({'error': 'insufficient_permissions',
-                        'message': 'Admin access required'}), 403
 
     payment = Payment.query.get(payment_id)
     if not payment:
@@ -310,7 +308,7 @@ def override_payment(payment_id):
             payment.payment_status = PaymentStatusEnum[new_status]
             changes.append(f'status={new_status}')
         except KeyError:
-            return jsonify({'error': 'missing_required_field',
+            return jsonify({'error': 'invalid_parameter',
                             'message': f'Invalid paymentStatus: {new_status}'}), 400
 
     if new_method:
@@ -318,23 +316,29 @@ def override_payment(payment_id):
             payment.payment_method = PaymentMethodEnum[new_method]
             changes.append(f'method={new_method}')
         except KeyError:
-            return jsonify({'error': 'missing_required_field',
+            return jsonify({'error': 'invalid_parameter',
                             'message': f'Invalid paymentMethod: {new_method}'}), 400
 
     if not changes:
-        return jsonify({'error': 'missing_required_field',
+        return jsonify({'error': 'invalid_parameter',
                         'message': 'No fields to override'}), 400
 
     try:
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
-        _log_event(f'Override failed for payment {payment_id}: {exc}')
-        return jsonify({'error': 'stripe_error',
+        log_error(SOURCE,f'Override failed for payment {payment_id}: {exc}')
+        return jsonify({'error': 'server_error',
                         'message': 'Failed to save override'}), 500
 
-    _log_event(
-        f'Admin override on payment {payment_id} by '
-        f'{session.get("username", "unknown")}: {", ".join(changes)}'
-    )
+    try:
+        from models import SystemEvent
+        db.session.add(SystemEvent(
+            source=SOURCE,
+            description=f'Admin override on payment {payment_id} by '
+                        f'{session.get("username", "unknown")}: {", ".join(changes)}',
+        ))
+        db.session.commit()
+    except Exception:
+        pass
     return jsonify(_payment_json(payment)), 200

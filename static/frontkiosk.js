@@ -176,29 +176,37 @@ async function showFloor() {
 
   try {
     const floors = await getAllFloors();
-    const f2 = floors.find(f => f.floor === 'Floor 2');
-    const f3 = floors.find(f => f.floor === 'Floor 3');
-    if (f2) populateZoneCard('f2', f2.available, f2.zones);
-    if (f3) populateZoneCard('f3', f3.available, f3.zones);
+    const container = document.getElementById('floor-cards');
+
+    if (!floors.length) {
+      container.innerHTML = '<p style="color:var(--text-dim)">No floor data available</p>';
+      return;
+    }
+
+    container.innerHTML = floors.map(f => {
+      const zones = f.zones || {};
+      const zoneKeys = Object.keys(zones).sort();
+      const zoneRows = zoneKeys.map(z =>
+        `<div class="zone-row">
+          <span class="zone-key">Zone ${z}</span>
+          <span class="zone-val${zones[z] === 'Full' ? ' full' : ''}">${zones[z]}</span>
+        </div>`
+      ).join('');
+
+      return `<div class="zone-card">
+        <div class="zone-card-title">${f.floor}</div>
+        <div class="zone-row">
+          <span class="zone-key">Available</span>
+          <span class="zone-val">${f.available ?? '—'}</span>
+        </div>
+        ${zoneRows || '<div class="zone-row"><span class="zone-key" style="color:var(--text-dim)">No zones</span></div>'}
+      </div>`;
+    }).join('');
   } catch (err) {
     alert(`Could not load floor data: ${err.message}`);
   } finally {
     setLoading(btn, false);
   }
-}
-
-function populateZoneCard(prefix, total, zones) {
-  document.getElementById(`${prefix}-total`).textContent = total ?? '—';
-  setZoneVal(`${prefix}-a`, zones?.A ?? '—');
-  setZoneVal(`${prefix}-b`, zones?.B ?? '—');
-  setZoneVal(`${prefix}-c`, zones?.C ?? '—');
-  setZoneVal(`${prefix}-d`, zones?.D ?? '—');
-}
-
-function setZoneVal(id, val) {
-  const el = document.getElementById(id);
-  el.textContent = val;
-  el.className = 'zone-val' + (val === 'Full' ? ' full' : '');
 }
 
 
