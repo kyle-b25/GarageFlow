@@ -42,29 +42,33 @@ def calculate_fee(duration_minutes):
     return Decimal('5.00') + Decimal('2.00') * math.ceil(duration_minutes / 60)
 
 
-def _get_current_user():
+def get_current_user():
     """
     Validate the Bearer token from the Authorization header.
     Returns the Staff object on success, or None on failure.
-    Sets g.current_user as a side effect.
+    Sets g.current_user and g.session_token as side effects.
     """
     auth_header = request.headers.get('Authorization', '')
     if not auth_header.startswith('Bearer '):
         return None
 
-    token = auth_header[7:]
-    if not token:
+    token_str = auth_header[7:]
+    if not token_str:
         return None
 
+    from sqlalchemy.orm import joinedload
     from models import SessionToken
-    session_token = SessionToken.query.filter_by(
-        token=token, is_active=True
+    session_token = SessionToken.query.options(
+        joinedload(SessionToken.staff)
+    ).filter_by(
+        token=token_str, is_active=True
     ).first()
 
     if not session_token or session_token.expires_at < datetime.utcnow():
         return None
 
     g.current_user = session_token.staff
+    g.session_token = session_token
     return session_token.staff
 
 
@@ -72,7 +76,7 @@ def login_required(f):
     """Decorator — rejects requests without a valid Bearer token."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not _get_current_user():
+        if not get_current_user():
             return jsonify({'error': 'unauthorized', 'message': 'Login required'}), 401
         return f(*args, **kwargs)
     return decorated
@@ -82,10 +86,11 @@ def admin_required(f):
     """Decorator — rejects requests without a valid admin Bearer token."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        user = _get_current_user()
+        from models import StaffRoleEnum
+        user = get_current_user()
         if not user:
             return jsonify({'error': 'unauthorized', 'message': 'Login required'}), 401
-        if user.role.value != 'admin':
+        if user.role != StaffRoleEnum.admin:
             return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated

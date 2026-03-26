@@ -137,15 +137,8 @@ def login():
 @login_required
 def refresh():
     from app import db
-    from models import SessionToken
 
-    auth_header = request.headers.get('Authorization', '')
-    old_token = auth_header[7:]
-
-    old = SessionToken.query.filter_by(token=old_token, is_active=True).first()
-    if old:
-        old.is_active = False
-
+    g.session_token.is_active = False
     new_token_obj = _create_token(g.current_user.operator_id)
     db.session.commit()
 
@@ -160,15 +153,9 @@ def refresh():
 @login_required
 def logout():
     from app import db
-    from models import SessionToken
 
-    auth_header = request.headers.get('Authorization', '')
-    token = auth_header[7:]
-
-    session_token = SessionToken.query.filter_by(token=token, is_active=True).first()
-    if session_token:
-        session_token.is_active = False
-        db.session.commit()
+    g.session_token.is_active = False
+    db.session.commit()
 
     return jsonify({'message': 'Logged out'}), 200
 
@@ -218,10 +205,10 @@ def register():
             'message': 'Password must be at least 8 characters',
         }), 400
 
-    if role not in ('admin', 'attendant'):
+    if role not in StaffRoleEnum.__members__:
         return jsonify({
             'error': 'invalid_parameter',
-            'message': 'role must be admin or attendant',
+            'message': f'role must be one of: {", ".join(sorted(StaffRoleEnum.__members__))}',
         }), 400
 
     if Staff.query.filter_by(username=username).first():
@@ -290,13 +277,9 @@ def change_password():
         new_password.encode('utf-8'), bcrypt.gensalt()
     ).decode('utf-8')
 
-    # Invalidate all existing tokens for this user
-    auth_header = request.headers.get('Authorization', '')
-    current_token = auth_header[7:]
-
     SessionToken.query.filter(
         SessionToken.staff_id == user.operator_id,
-        SessionToken.token != current_token,
+        SessionToken.id != g.session_token.id,
         SessionToken.is_active == True,
     ).update({'is_active': False})
 

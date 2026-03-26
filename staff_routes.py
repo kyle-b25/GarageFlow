@@ -11,14 +11,12 @@ Exports:
 
 from collections import defaultdict
 from datetime import datetime, timedelta
-from functools import wraps
 import bcrypt
 from flask import Blueprint, request, jsonify, g
 
-from utils import _get_current_user
+from utils import get_current_user, admin_required as require_admin
 
 staff_bp    = Blueprint('staff', __name__)
-_VALID_ROLES = {'admin', 'attendant'}
 
 
 # ------------------------------------------------------------------
@@ -28,25 +26,8 @@ _VALID_ROLES = {'admin', 'attendant'}
 @staff_bp.before_request
 def require_auth():
     """Reject any request that arrives without a valid Bearer token."""
-    if not _get_current_user():
+    if not get_current_user():
         return jsonify({'error': 'unauthorized', 'message': 'Login required'}), 401
-
-
-# ------------------------------------------------------------------
-#  Decorators
-# ------------------------------------------------------------------
-
-def require_admin(f):
-    """
-    Route decorator that restricts access to admin-role tokens.
-    Apply after @staff_bp.route (i.e., closer to the function definition).
-    """
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if g.current_user.role.value != 'admin':
-            return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
-        return f(*args, **kwargs)
-    return decorated
 
 
 # ------------------------------------------------------------------
@@ -77,10 +58,10 @@ def create_staff():
         return jsonify({'error': 'missing_required_field', 'message': 'username is required'}), 400
     if not password:
         return jsonify({'error': 'missing_required_field', 'message': 'password is required'}), 400
-    if role_str not in _VALID_ROLES:
+    if role_str not in StaffRoleEnum.__members__:
         return jsonify({
             'error':   'invalid_role',
-            'message': f'role must be one of: {", ".join(sorted(_VALID_ROLES))}',
+            'message': f'role must be one of: {", ".join(sorted(StaffRoleEnum.__members__))}',
         }), 400
 
     if Staff.query.filter_by(username=username).first():

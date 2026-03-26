@@ -7,70 +7,21 @@ empty-log edge cases, and invalid date range validation.
 Run:  pytest tests/test_analytics.py -v
 """
 
-import secrets
-from datetime import datetime, timedelta
+from datetime import datetime
 
-import bcrypt
 import pytest
 
 from app import app, db
+from tests.conftest import auth_header as _auth
 from models import (
-    Garage, Floor, ParkingSpot, OccupancyLog, Staff, SessionToken,
-    SpotTypeEnum, SpotStatusEnum, OccupancyChangeEnum, StaffRoleEnum,
+    Garage, Floor, ParkingSpot, OccupancyLog,
+    SpotTypeEnum, SpotStatusEnum, OccupancyChangeEnum,
 )
 
 
 # ======================================================================
 #  Fixtures
 # ======================================================================
-
-@pytest.fixture()
-def client():
-    """Test client with in-memory SQLite."""
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'
-    app.config['SECRET_KEY'] = 'test-secret'
-
-    with app.app_context():
-        db.create_all()
-        yield app.test_client()
-        db.session.remove()
-        db.drop_all()
-
-
-def _create_auth_token():
-    """Create an admin staff + active token, return token string."""
-    pw_hash = bcrypt.hashpw(b'testpass1', bcrypt.gensalt()).decode()
-    staff = Staff(
-        name='Test Admin',
-        username=f'admin_{secrets.token_hex(4)}',
-        password_hash=pw_hash,
-        role=StaffRoleEnum.admin,
-    )
-    db.session.add(staff)
-    db.session.flush()
-
-    token_str = secrets.token_hex(32)
-    db.session.add(SessionToken(
-        staff_id=staff.operator_id,
-        token=token_str,
-        created_at=datetime.utcnow(),
-        expires_at=datetime.utcnow() + timedelta(hours=8),
-        is_active=True,
-    ))
-    db.session.commit()
-    return token_str
-
-
-@pytest.fixture()
-def auth_token(client):
-    """Admin Bearer token."""
-    with app.app_context():
-        return _create_auth_token()
-
-
-def _auth(token):
-    return {'Authorization': f'Bearer {token}'}
 
 
 @pytest.fixture()

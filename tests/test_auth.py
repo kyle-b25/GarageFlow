@@ -13,26 +13,13 @@ import bcrypt
 import pytest
 
 from app import app, db
+from tests.conftest import auth_header as _auth_header
 from models import Staff, SessionToken, StaffRoleEnum
 
 
 # ======================================================================
 #  Fixtures
 # ======================================================================
-
-@pytest.fixture()
-def client():
-    """Test client with in-memory SQLite."""
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'
-    app.config['SECRET_KEY'] = 'test-secret'
-
-    with app.app_context():
-        db.create_all()
-        yield app.test_client()
-        db.session.remove()
-        db.drop_all()
-
 
 @pytest.fixture()
 def admin_user(client):
@@ -87,9 +74,6 @@ def _login(client, username, password):
         token = resp.get_json()['token']
     return resp, token
 
-
-def _auth_header(token):
-    return {'Authorization': f'Bearer {token}'}
 
 
 # ======================================================================
