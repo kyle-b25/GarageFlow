@@ -312,3 +312,112 @@ def get_floors():
         })
 
     return jsonify(result), 200
+
+
+# ------------------------------------------------------------------
+#  GET /v1/capacity
+# ------------------------------------------------------------------
+
+@v1_bp.route('/capacity', methods=['GET'])
+def get_capacity():
+    from app import db
+    from models import ParkingSpot, SpotTypeEnum, SpotStatusEnum
+
+    try:
+        spots = ParkingSpot.query.all()
+
+        by_type = {}
+        for st in SpotTypeEnum:
+            by_type[st.value] = {'total': 0, 'occupied': 0, 'available': 0}
+
+        for spot in spots:
+            bucket = by_type[spot.spot_type.value]
+            bucket['total'] += 1
+            if spot.status == SpotStatusEnum.occupied:
+                bucket['occupied'] += 1
+            elif spot.status == SpotStatusEnum.available:
+                bucket['available'] += 1
+
+        total    = sum(b['total'] for b in by_type.values())
+        occupied = sum(b['occupied'] for b in by_type.values())
+        available = sum(b['available'] for b in by_type.values())
+
+        return jsonify({
+            'total': total,
+            'occupied': occupied,
+            'available': available,
+            'byType': by_type,
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('routes.get_capacity', str(exc))
+        return jsonify({'error': 'server_error'}), 500
+
+
+# ------------------------------------------------------------------
+#  GET /v1/capacity/status
+# ------------------------------------------------------------------
+
+@v1_bp.route('/capacity/status', methods=['GET'])
+def get_capacity_status():
+    from app import db
+    from models import ParkingSpot, SpotTypeEnum, SpotStatusEnum
+
+    try:
+        spots = ParkingSpot.query.filter_by(status=SpotStatusEnum.available).all()
+
+        counts = {st.value: 0 for st in SpotTypeEnum}
+        for spot in spots:
+            counts[spot.spot_type.value] += 1
+
+        return jsonify(counts), 200
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('routes.get_capacity_status', str(exc))
+        return jsonify({'error': 'server_error'}), 500
+
+
+# ------------------------------------------------------------------
+#  GET /v1/capacity/floors/<floorId>
+# ------------------------------------------------------------------
+
+@v1_bp.route('/capacity/floors/<int:floorId>', methods=['GET'])
+def get_capacity_floor(floorId):
+    from app import db
+    from models import Floor, ParkingSpot, SpotTypeEnum, SpotStatusEnum
+
+    try:
+        floor = Floor.query.filter_by(floor_id=floorId).first()
+        if not floor:
+            return jsonify({'error': 'floor_not_found'}), 404
+
+        spots = ParkingSpot.query.filter_by(floor_id=floorId).all()
+
+        by_type = {}
+        for st in SpotTypeEnum:
+            by_type[st.value] = {'total': 0, 'occupied': 0, 'available': 0}
+
+        for spot in spots:
+            bucket = by_type[spot.spot_type.value]
+            bucket['total'] += 1
+            if spot.status == SpotStatusEnum.occupied:
+                bucket['occupied'] += 1
+            elif spot.status == SpotStatusEnum.available:
+                bucket['available'] += 1
+
+        total    = sum(b['total'] for b in by_type.values())
+        occupied = sum(b['occupied'] for b in by_type.values())
+        available = sum(b['available'] for b in by_type.values())
+
+        return jsonify({
+            'floorId': floor.floor_id,
+            'floorName': floor.floor_name or f'Floor {floor.floor_number}',
+            'total': total,
+            'occupied': occupied,
+            'available': available,
+            'byType': by_type,
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('routes.get_capacity_floor', str(exc))
+        return jsonify({'error': 'server_error'}), 500
