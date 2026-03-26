@@ -338,7 +338,7 @@ def get_floors():
 
             result.append({
                 'floor': floor.floor_name if floor.floor_name else f'Floor {floor.floor_number}',
-                'total': floor.available_spots,
+                'available': floor.available_spots,
                 'zones': zones,
             })
 

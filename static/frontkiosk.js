@@ -178,8 +178,8 @@ async function showFloor() {
     const floors = await getAllFloors();
     const f2 = floors.find(f => f.floor === 'Floor 2');
     const f3 = floors.find(f => f.floor === 'Floor 3');
-    if (f2) populateZoneCard('f2', f2.total, f2.zones);
-    if (f3) populateZoneCard('f3', f3.total, f3.zones);
+    if (f2) populateZoneCard('f2', f2.available, f2.zones);
+    if (f3) populateZoneCard('f3', f3.available, f3.zones);
   } catch (err) {
     alert(`Could not load floor data: ${err.message}`);
   } finally {

@@ -129,7 +129,7 @@ export async function getReservationsByPhone(phone, includeOld = false) {
 /**
  * GET /v1/floors
  * Fetch availability data for all floors.
- * @returns {Promise<Array<{ floor: string, total: number, zones: object }>>}
+ * @returns {Promise<Array<{ floor: string, available: number, zones: object }>>}
  */
 export async function getAllFloors() {
   return _request('GET', '/v1/floors');
