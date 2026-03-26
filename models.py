@@ -16,6 +16,8 @@
 #    python -c "from app import app, db; app.app_context().push(); db.create_all()"
 # =============================================================
 
+from datetime import datetime
+
 from app import db
 import enum
 
@@ -248,6 +250,26 @@ class Staff(db.Model):
 
     def __repr__(self):
         return f"<Staff {self.operator_id}: {self.username} [{self.role.value}]>"
+
+
+class SessionToken(db.Model):
+    """
+    DB-backed auth token. Each row represents one active (or expired/revoked)
+    session for a staff member. Tokens are 64-char hex strings with an 8-hour TTL.
+    """
+    __tablename__ = "session_token"
+
+    id         = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    staff_id   = db.Column(db.Integer, db.ForeignKey('staff.operator_id'), nullable=False)
+    token      = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    is_active  = db.Column(db.Boolean, nullable=False, default=True)
+
+    staff = db.relationship('Staff', backref='session_tokens')
+
+    def __repr__(self):
+        return f"<SessionToken {self.id} staff={self.staff_id} active={self.is_active}>"
 
 
 # =============================================================

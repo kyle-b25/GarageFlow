@@ -13,7 +13,9 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import wraps
 import bcrypt
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, g
+
+from utils import _get_current_user
 
 staff_bp    = Blueprint('staff', __name__)
 _VALID_ROLES = {'admin', 'attendant'}
@@ -25,8 +27,8 @@ _VALID_ROLES = {'admin', 'attendant'}
 
 @staff_bp.before_request
 def require_auth():
-    """Reject any request that arrives without an active staff session."""
-    if 'operator_id' not in session:
+    """Reject any request that arrives without a valid Bearer token."""
+    if not _get_current_user():
         return jsonify({'error': 'unauthorized', 'message': 'Login required'}), 401
 
 
@@ -36,12 +38,12 @@ def require_auth():
 
 def require_admin(f):
     """
-    Route decorator that restricts access to admin-role sessions.
+    Route decorator that restricts access to admin-role tokens.
     Apply after @staff_bp.route (i.e., closer to the function definition).
     """
     @wraps(f)
     def decorated(*args, **kwargs):
-        if session.get('role') != 'admin':
+        if g.current_user.role.value != 'admin':
             return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated

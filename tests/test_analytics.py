@@ -7,14 +7,16 @@ empty-log edge cases, and invalid date range validation.
 Run:  pytest tests/test_analytics.py -v
 """
 
+import secrets
 from datetime import datetime, timedelta
 
+import bcrypt
 import pytest
 
 from app import app, db
 from models import (
-    Garage, Floor, ParkingSpot, OccupancyLog,
-    SpotTypeEnum, SpotStatusEnum, OccupancyChangeEnum,
+    Garage, Floor, ParkingSpot, OccupancyLog, Staff, SessionToken,
+    SpotTypeEnum, SpotStatusEnum, OccupancyChangeEnum, StaffRoleEnum,
 )
 
 
@@ -36,8 +38,43 @@ def client():
         db.drop_all()
 
 
+def _create_auth_token():
+    """Create an admin staff + active token, return token string."""
+    pw_hash = bcrypt.hashpw(b'testpass1', bcrypt.gensalt()).decode()
+    staff = Staff(
+        name='Test Admin',
+        username=f'admin_{secrets.token_hex(4)}',
+        password_hash=pw_hash,
+        role=StaffRoleEnum.admin,
+    )
+    db.session.add(staff)
+    db.session.flush()
+
+    token_str = secrets.token_hex(32)
+    db.session.add(SessionToken(
+        staff_id=staff.operator_id,
+        token=token_str,
+        created_at=datetime.utcnow(),
+        expires_at=datetime.utcnow() + timedelta(hours=8),
+        is_active=True,
+    ))
+    db.session.commit()
+    return token_str
+
+
 @pytest.fixture()
-def seeded(client):
+def auth_token(client):
+    """Admin Bearer token."""
+    with app.app_context():
+        return _create_auth_token()
+
+
+def _auth(token):
+    return {'Authorization': f'Bearer {token}'}
+
+
+@pytest.fixture()
+def seeded(client, auth_token):
     """
     Seed a garage with 1 floor, 5 spots, and occupancy events.
 
@@ -104,12 +141,13 @@ def seeded(client):
 
 class TestUtilization:
 
-    def test_hourly_buckets(self, client, seeded):
+    def test_hourly_buckets(self, client, auth_token, seeded):
         """Range <= 7 days -> hourly interval; verify occupancy math."""
         start = '2026-03-20T00:00:00Z'
         end = '2026-03-20T23:59:59Z'
 
-        resp = client.get(f'/v1/analytics/utilization?start={start}&end={end}')
+        resp = client.get(f'/v1/analytics/utilization?start={start}&end={end}',
+                          headers=_auth(auth_token))
         assert resp.status_code == 200
         body = resp.get_json()
 
@@ -137,38 +175,41 @@ class TestUtilization:
         assert b16['occupied'] == 1
         assert b16['utilizationRate'] == 20.0
 
-    def test_daily_interval_for_long_range(self, client, seeded):
+    def test_daily_interval_for_long_range(self, client, auth_token, seeded):
         """Range > 7 days -> daily interval."""
         start = '2026-03-01T00:00:00Z'
         end = '2026-03-25T00:00:00Z'
 
-        resp = client.get(f'/v1/analytics/utilization?start={start}&end={end}')
+        resp = client.get(f'/v1/analytics/utilization?start={start}&end={end}',
+                          headers=_auth(auth_token))
         assert resp.status_code == 200
         body = resp.get_json()
         assert body['interval'] == 'daily'
 
-    def test_floor_filter(self, client, seeded):
+    def test_floor_filter(self, client, auth_token, seeded):
         """Supplying floor_id restricts to that floor's spots."""
         fid = seeded['floor_id']
         start = '2026-03-20T00:00:00Z'
         end = '2026-03-20T23:59:59Z'
 
         resp = client.get(
-            f'/v1/analytics/utilization?start={start}&end={end}&floor_id={fid}'
+            f'/v1/analytics/utilization?start={start}&end={end}&floor_id={fid}',
+            headers=_auth(auth_token),
         )
         assert resp.status_code == 200
         assert resp.get_json()['totalSpots'] == 5
 
-    def test_floor_not_found(self, client, seeded):
+    def test_floor_not_found(self, client, auth_token, seeded):
         start = '2026-03-20T00:00:00Z'
         end = '2026-03-20T23:59:59Z'
 
         resp = client.get(
-            f'/v1/analytics/utilization?start={start}&end={end}&floor_id=9999'
+            f'/v1/analytics/utilization?start={start}&end={end}&floor_id=9999',
+            headers=_auth(auth_token),
         )
         assert resp.status_code == 404
 
-    def test_empty_log(self, client):
+    def test_empty_log(self, client, auth_token):
         """No occupancy events -> empty buckets, zero spots."""
         with app.app_context():
             g = Garage(name='Empty', total_capacity=0, number_of_floors=0)
@@ -177,26 +218,30 @@ class TestUtilization:
 
         start = '2026-01-01T00:00:00Z'
         end = '2026-01-02T00:00:00Z'
-        resp = client.get(f'/v1/analytics/utilization?start={start}&end={end}')
+        resp = client.get(f'/v1/analytics/utilization?start={start}&end={end}',
+                          headers=_auth(auth_token))
         assert resp.status_code == 200
         body = resp.get_json()
         assert body['totalSpots'] == 0
         assert body['buckets'] == []
 
-    def test_invalid_range_end_before_start(self, client, seeded):
+    def test_invalid_range_end_before_start(self, client, auth_token, seeded):
         resp = client.get(
-            '/v1/analytics/utilization?start=2026-03-20T12:00:00Z&end=2026-03-20T06:00:00Z'
+            '/v1/analytics/utilization?start=2026-03-20T12:00:00Z&end=2026-03-20T06:00:00Z',
+            headers=_auth(auth_token),
         )
         assert resp.status_code == 400
         assert resp.get_json()['error'] == 'invalid_range'
 
-    def test_missing_start(self, client, seeded):
-        resp = client.get('/v1/analytics/utilization?end=2026-03-20T23:00:00Z')
+    def test_missing_start(self, client, auth_token, seeded):
+        resp = client.get('/v1/analytics/utilization?end=2026-03-20T23:00:00Z',
+                          headers=_auth(auth_token))
         assert resp.status_code == 400
         assert resp.get_json()['error'] == 'invalid_range'
 
-    def test_missing_end(self, client, seeded):
-        resp = client.get('/v1/analytics/utilization?start=2026-03-20T00:00:00Z')
+    def test_missing_end(self, client, auth_token, seeded):
+        resp = client.get('/v1/analytics/utilization?start=2026-03-20T00:00:00Z',
+                          headers=_auth(auth_token))
         assert resp.status_code == 400
         assert resp.get_json()['error'] == 'invalid_range'
 
@@ -207,9 +252,9 @@ class TestUtilization:
 
 class TestOccupancy:
 
-    def test_live_counts(self, client, seeded):
+    def test_live_counts(self, client, auth_token, seeded):
         """Live occupancy reflects current ParkingSpot status."""
-        resp = client.get('/v1/analytics/occupancy')
+        resp = client.get('/v1/analytics/occupancy', headers=_auth(auth_token))
         assert resp.status_code == 200
         body = resp.get_json()
 
@@ -219,9 +264,9 @@ class TestOccupancy:
         assert live['available'] == 4
         assert live['utilizationRate'] == 20.0
 
-    def test_live_by_floor(self, client, seeded):
+    def test_live_by_floor(self, client, auth_token, seeded):
         """byFloor breakdown present when no floor_id filter."""
-        resp = client.get('/v1/analytics/occupancy')
+        resp = client.get('/v1/analytics/occupancy', headers=_auth(auth_token))
         body = resp.get_json()
 
         assert 'byFloor' in body['live']
@@ -230,25 +275,26 @@ class TestOccupancy:
         assert floors[0]['floorName'] == 'Ground'
         assert floors[0]['total'] == 5
 
-    def test_floor_filter_hides_breakdown(self, client, seeded):
+    def test_floor_filter_hides_breakdown(self, client, auth_token, seeded):
         """When floor_id is given, byFloor is omitted."""
         fid = seeded['floor_id']
-        resp = client.get(f'/v1/analytics/occupancy?floor_id={fid}')
+        resp = client.get(f'/v1/analytics/occupancy?floor_id={fid}',
+                          headers=_auth(auth_token))
         body = resp.get_json()
 
         assert body['live']['total'] == 5
         assert 'byFloor' not in body['live']
 
-    def test_trend_present(self, client, seeded):
+    def test_trend_present(self, client, auth_token, seeded):
         """Historical trend is returned."""
-        resp = client.get('/v1/analytics/occupancy')
+        resp = client.get('/v1/analytics/occupancy', headers=_auth(auth_token))
         body = resp.get_json()
         assert 'trend' in body
         assert isinstance(body['trend'], list)
 
-    def test_empty_garage(self, client):
+    def test_empty_garage(self, client, auth_token):
         """No spots at all -> zero counts, empty trend."""
-        resp = client.get('/v1/analytics/occupancy')
+        resp = client.get('/v1/analytics/occupancy', headers=_auth(auth_token))
         assert resp.status_code == 200
         body = resp.get_json()
         assert body['live']['total'] == 0
@@ -262,12 +308,13 @@ class TestOccupancy:
 
 class TestPeakHours:
 
-    def test_ranking(self, client, seeded):
+    def test_ranking(self, client, auth_token, seeded):
         """Hours are ranked by average entries descending."""
         start = '2026-03-20T00:00:00Z'
         end = '2026-03-20T23:59:59Z'
 
-        resp = client.get(f'/v1/analytics/peak-hours?start={start}&end={end}')
+        resp = client.get(f'/v1/analytics/peak-hours?start={start}&end={end}',
+                          headers=_auth(auth_token))
         assert resp.status_code == 200
         body = resp.get_json()
 
@@ -279,12 +326,13 @@ class TestPeakHours:
         for i in range(len(hours) - 1):
             assert hours[i]['averageEntries'] >= hours[i + 1]['averageEntries']
 
-    def test_entry_counts(self, client, seeded):
+    def test_entry_counts(self, client, auth_token, seeded):
         """3 occupied events at hours 8, 9, 10 -> each has totalEntries 1."""
         start = '2026-03-20T00:00:00Z'
         end = '2026-03-20T23:59:59Z'
 
-        resp = client.get(f'/v1/analytics/peak-hours?start={start}&end={end}')
+        resp = client.get(f'/v1/analytics/peak-hours?start={start}&end={end}',
+                          headers=_auth(auth_token))
         hours_by_h = {h['hour']: h for h in resp.get_json()['hours']}
 
         assert hours_by_h[8]['totalEntries'] == 1
@@ -294,27 +342,30 @@ class TestPeakHours:
         assert hours_by_h[14]['totalEntries'] == 0
         assert hours_by_h[16]['totalEntries'] == 0
 
-    def test_empty_log(self, client):
+    def test_empty_log(self, client, auth_token):
         """No events -> all hours have 0 entries."""
         start = '2026-01-01T00:00:00Z'
         end = '2026-01-02T00:00:00Z'
 
-        resp = client.get(f'/v1/analytics/peak-hours?start={start}&end={end}')
+        resp = client.get(f'/v1/analytics/peak-hours?start={start}&end={end}',
+                          headers=_auth(auth_token))
         assert resp.status_code == 200
         hours = resp.get_json()['hours']
         assert all(h['totalEntries'] == 0 for h in hours)
 
-    def test_invalid_range(self, client):
+    def test_invalid_range(self, client, auth_token):
         resp = client.get(
-            '/v1/analytics/peak-hours?start=2026-03-20T12:00:00Z&end=2026-03-20T06:00:00Z'
+            '/v1/analytics/peak-hours?start=2026-03-20T12:00:00Z&end=2026-03-20T06:00:00Z',
+            headers=_auth(auth_token),
         )
         assert resp.status_code == 400
         assert resp.get_json()['error'] == 'invalid_range'
 
-    def test_num_days(self, client, seeded):
+    def test_num_days(self, client, auth_token, seeded):
         """numDays reflects the range span."""
         start = '2026-03-18T00:00:00Z'
         end = '2026-03-21T00:00:00Z'
 
-        resp = client.get(f'/v1/analytics/peak-hours?start={start}&end={end}')
+        resp = client.get(f'/v1/analytics/peak-hours?start={start}&end={end}',
+                          headers=_auth(auth_token))
         assert resp.get_json()['numDays'] == 3

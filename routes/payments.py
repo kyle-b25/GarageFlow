@@ -50,6 +50,7 @@ def _payment_json(payment):
 # ------------------------------------------------------------------
 
 @payments_bp.route('', methods=['POST'])
+@login_required
 def create_payment():
     from app import db
     from models import (
@@ -176,6 +177,7 @@ def payment_reports():
 # ------------------------------------------------------------------
 
 @payments_bp.route('/<int:payment_id>', methods=['GET'])
+@login_required
 def get_payment(payment_id):
     from models import Payment
 
@@ -192,6 +194,7 @@ def get_payment(payment_id):
 # ------------------------------------------------------------------
 
 @payments_bp.route('', methods=['GET'])
+@login_required
 def list_payments():
     from models import Payment, Ticket, Vehicle
 
@@ -223,6 +226,7 @@ def list_payments():
 # ------------------------------------------------------------------
 
 @payments_bp.route('/<int:payment_id>/refund', methods=['POST'])
+@login_required
 def refund_payment(payment_id):
     from app import db
     from models import Payment, PaymentStatusEnum

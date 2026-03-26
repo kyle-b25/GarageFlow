@@ -206,13 +206,13 @@ def put_ticket_exit(ticket_id):
 # ------------------------------------------------------------------
 
 from routes import v1_bp
-from auth import auth_bp
+from routes.auth import token_auth_bp
 from routes.analytics import analytics_bp
 from staff_routes import staff_bp
 from routes.payments import payments_bp
 
 app.register_blueprint(v1_bp)
-app.register_blueprint(auth_bp)
+app.register_blueprint(token_auth_bp)
 app.register_blueprint(analytics_bp)
 app.register_blueprint(staff_bp)
 app.register_blueprint(payments_bp)

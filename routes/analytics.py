@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify
 from sqlalchemy import case, func
 
+from utils import login_required
+
 analytics_bp = Blueprint('analytics', __name__, url_prefix='/v1/analytics')
 
 
@@ -71,6 +73,7 @@ def _spot_filter(query, floor_id):
 # ------------------------------------------------------------------
 
 @analytics_bp.route('/utilization', methods=['GET'])
+@login_required
 def utilization():
     """
     Utilization rate over time: (occupied / total) x 100, grouped by
@@ -196,6 +199,7 @@ def utilization():
 # ------------------------------------------------------------------
 
 @analytics_bp.route('/occupancy', methods=['GET'])
+@login_required
 def occupancy():
     """
     Live occupancy from current spot status, plus a 30-day historical
@@ -316,6 +320,7 @@ def occupancy():
 # ------------------------------------------------------------------
 
 @analytics_bp.route('/peak-hours', methods=['GET'])
+@login_required
 def peak_hours():
     """
     Peak usage: group occupancy "occupied" events from occupancy_log
