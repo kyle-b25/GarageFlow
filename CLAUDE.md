@@ -22,11 +22,13 @@ flask run
 # Seed the database (creates 1 garage → 1 floor → 5 standard spots)
 python seed.py
 
-# Create an admin staff account (interactive CLI)
+# Create an admin staff account (username: admin, password: admin)
 flask seed-admin
 ```
 
 Environment variables are loaded from `.env` via `python-dotenv`. Key vars: `SECRET_KEY`, `DATABASE_URL` (defaults to SQLite at `instance/database.db`), `STRIPE_WEBHOOK_SECRET`, `STRIPE_SECRET_KEY`.
+
+Database schema is auto-created on app startup via `db.create_all()`. There are no migrations (no Alembic/Flask-Migrate). No test suite, linting, or CI/CD is configured.
 
 ## Architecture
 
@@ -34,7 +36,8 @@ Environment variables are loaded from `.env` via `python-dotenv`. Key vars: `SEC
 
 ### Backend
 
-- `app.py` — Main Flask app and public API routes. Registers blueprints from `auth.py` and `staff_routes.py`. Contains `assign_spot()` / `release_spot()` helpers.
+- `app.py` — Main Flask app entry point. Registers all blueprints, contains `release_spot()` helper, `_ticket_json()` serializer, and the ticket read/exit endpoints (`GET /v1/tickets`, `GET /v1/tickets/{id}`, `PUT /v1/tickets/{id}/exit`).
+- `routes.py` — Public API blueprint (`v1_bp`). Contains `assign_spot()` helper, vehicle entry (`POST /v1/tickets`), reservations, capacity endpoints, and Stripe webhook handlers.
 - `models.py` — All SQLAlchemy models (13 tables) and enums. Key models: `Garage`, `Floor`, `ParkingSpot`, `Vehicle`, `Ticket`, `Reservation`, `OccupancyLog`, `Staff`.
 - `auth.py` — Authentication blueprint (`auth_bp`). Handles login/logout/status with Flask sessions and bcrypt. Includes IP-based rate limiting (5 failures per 60s).
 - `staff_routes.py` — Staff management blueprint (`staff_bp`). Protected by `require_auth` middleware and `require_admin` decorator for RBAC.
@@ -57,7 +60,10 @@ Environment variables are loaded from `.env` via `python-dotenv`. Key vars: `SEC
 | GET | `/v1/auth/status` | — | Check session status |
 | GET | `/v1/floors` | Staff | Floor availability with zone breakdown |
 | POST | `/v1/staff` | Admin | Create staff account |
-| POST | `/v1/webhooks/stripe` | — | Stripe webhook (signature-verified) |
+| GET | `/v1/capacity` | — | Total/occupied/available counts by spot type |
+| GET | `/v1/capacity/status` | — | Available spot counts by type |
+| GET | `/v1/capacity/floors/{id}` | — | Capacity breakdown for a single floor |
+| POST | `/v1/webhooks/stripe` | — | Stripe webhook (signature-verified, deduplicated) |
 | GET | `/v1/analytics/utilization` | Staff | Daily entry/exit counts from OccupancyLog (`?from=&to=`) |
 | GET | `/v1/analytics/revenue` | Staff | Revenue totals and avg fee for closed tickets (`?from=&to=`) |
 | GET | `/v1/analytics/peak-hours` | Staff | Hourly entry distribution (0–23) (`?from=&to=`) |
@@ -78,6 +84,7 @@ Environment variables are loaded from `.env` via `python-dotenv`. Key vars: `SEC
 - **Spot assignment algorithm**: Floors sorted by availability ratio (available/total) descending, then first available spot of the requested type is assigned (floor-spread fairness).
 - **Fee calculation**: $5.00 base + $2.00 per hour (ceiling of minutes/60). `PricingRule` table exists but is not yet wired up.
 - **Auth is session-based**: Flask sessions store `operator_id`, `username`, `role`. Rate limiting is in-memory (not distributed).
+- **Stripe webhook deduplication**: Event IDs are checked against `SystemEvent` table to prevent reprocessing. Handlers exist for `payment_intent.succeeded`, `payment_intent.payment_failed`, `payment_intent.canceled`, and `charge.refunded`.
 
 ### Frontend
 

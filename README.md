@@ -34,6 +34,7 @@ Sensor integration and payment processing are considered out of scope for and wi
    - FLASK_DEBUG=1
    - SECRET_KEY=yoursecretkey
    - DATABASE_URL=sqlite:///database.db
+   - STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key
 5. Run the database setup.
    - python -c "from app import app, db; app.app_context().push(); db.create_all()"
 6. Run the server.
