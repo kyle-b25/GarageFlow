@@ -9,7 +9,6 @@ Exports:
   require_admin — decorator for admin-only route functions
 """
 
-import re
 from functools import wraps
 import bcrypt
 from flask import Blueprint, request, jsonify, session
@@ -44,52 +43,6 @@ def require_admin(f):
             return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated
-
-
-# ------------------------------------------------------------------
-#  GET /v1/floors  (any authenticated staff)
-# ------------------------------------------------------------------
-
-@staff_bp.route('/v1/floors', methods=['GET'])
-def get_floors():
-    """
-    GET /v1/floors
-
-    Return availability summary for every floor with per-zone counts.
-    Zones are identified by the first uppercase letter in location_reference.
-    Spots with no location_reference are excluded from zone tallies.
-    """
-    from models import Floor, SpotStatusEnum
-
-    floors = Floor.query.order_by(Floor.floor_number).all()
-    result = []
-
-    for floor in floors:
-        zone_available = {}
-        zone_total     = {}
-
-        for spot in floor.parking_spots:
-            loc = spot.location_reference
-            if not loc:
-                continue
-            m    = re.search(r'[A-Z]', loc)
-            zone = m.group(0) if m else '_unzoned'
-            zone_total[zone] = zone_total.get(zone, 0) + 1
-            if spot.status == SpotStatusEnum.available:
-                zone_available[zone] = zone_available.get(zone, 0) + 1
-
-        zones = {
-            z: (zone_available.get(z, 0) if zone_available.get(z, 0) > 0 else 'Full')
-            for z in sorted(zone_total)
-        }
-
-        result.append({
-            'floor': floor.floor_name if floor.floor_name else f'Floor {floor.floor_number}',
-            'total': floor.available_spots,
-            'zones': zones,
-        })
-
-    return jsonify(result), 200
 
 
 # ------------------------------------------------------------------

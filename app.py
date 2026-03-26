@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from decimal import Decimal
 import math
-import re
 import os
 
 load_dotenv()
@@ -20,7 +19,6 @@ db = SQLAlchemy(app)
 from models import (
     Floor, ParkingSpot, Vehicle, Ticket, OccupancyLog,
     SpotStatusEnum, SpotTypeEnum, VehicleTypeEnum, TicketStatusEnum, OccupancyChangeEnum,
-    Reservation, ReservationStatusEnum,
     Payment, PaymentMethodEnum, PaymentStatusEnum,
 )
 
@@ -37,46 +35,6 @@ def index():
 def health():
     return {'status': 'ok'}
 
-
-_DRIVER_CLASS_TO_SPOT_TYPE = {
-    'standard':      SpotTypeEnum.standard,
-    'accessibility': SpotTypeEnum.accessibility,
-    'employee':      SpotTypeEnum.staff,
-    'eco':           SpotTypeEnum.standard,
-}
-
-VALID_DRIVER_CLASSES = set(_DRIVER_CLASS_TO_SPOT_TYPE.keys())
-
-
-def assign_spot(driver_class):
-    """
-    Find the best available (spot, floor) pair for the given driver class.
-
-    Floors are sorted by availability ratio (available/total) descending,
-    tiebreak by floor_number ascending. Sorting done in Python — SQLite
-    integer division truncates and cannot be used in ORDER BY for ratios.
-
-    Returns (spot, floor) on success, or (None, None) if garage is full.
-    """
-    spot_type_val = _DRIVER_CLASS_TO_SPOT_TYPE[driver_class]
-
-    floors = [f for f in Floor.query.filter(Floor.available_spots > 0).all()
-              if f.total_spots > 0]
-    if not floors:
-        return None, None
-
-    floors.sort(key=lambda f: (-(f.available_spots / f.total_spots), f.floor_number))
-
-    for floor in floors:
-        spot = ParkingSpot.query.filter_by(
-            floor_id=floor.floor_id,
-            spot_type=spot_type_val,
-            status=SpotStatusEnum.available,
-        ).first()
-        if spot:
-            return spot, floor
-
-    return None, None
 
 
 def release_spot(spot_id, exit_ts):
@@ -103,85 +61,6 @@ def release_spot(spot_id, exit_ts):
     ))
     return spot
 
-
-@app.route('/v1/tickets', methods=['POST'])
-def post_ticket():
-    data = request.get_json(silent=True) or {}
-
-    license_plate = data.get('licensePlate')
-    driver_class  = data.get('driverClass')
-    phone         = data.get('phone')
-
-    # Step 1 — Validate input
-    if not license_plate or not driver_class:
-        missing = 'licensePlate' if not license_plate else 'driverClass'
-        return jsonify({'error': 'missing_required_field', 'message': f'{missing} is required'}), 400
-
-    if driver_class not in VALID_DRIVER_CLASSES:
-        return jsonify({
-            'error': 'missing_required_field',
-            'message': f'driverClass must be one of: {", ".join(sorted(VALID_DRIVER_CLASSES))}',
-        }), 400
-
-    # Step 2 — Check global availability
-    if not Floor.query.filter(Floor.available_spots > 0).first():
-        return jsonify({'error': 'garage_full', 'message': 'Garage is full'}), 503
-
-    # Step 3 — Get or create Vehicle
-    vehicle = Vehicle.query.filter_by(license_plate=license_plate).first()
-    if not vehicle:
-        vehicle = Vehicle(
-            license_plate=license_plate,
-            vehicle_type=VehicleTypeEnum.car,
-            customer_id=None,
-        )
-        db.session.add(vehicle)
-        db.session.flush()
-
-    # Step 4 — Duplicate active ticket check
-    if Ticket.query.filter_by(vehicle_id=vehicle.vehicle_id, status=TicketStatusEnum.active).first():
-        return jsonify({'error': 'duplicate_plate', 'message': 'Vehicle already has an active ticket'}), 409
-
-    # Step 5 — Assign spot
-    spot, floor = assign_spot(driver_class)
-    if not spot:
-        return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
-
-    # Step 6 — Create Ticket
-    ticket = Ticket(
-        vehicle_id=vehicle.vehicle_id,
-        spot_id=spot.spot_id,
-        entry_timestamp=datetime.utcnow(),
-        status=TicketStatusEnum.active,
-    )
-
-    # Steps 7–9 — Write to DB
-    try:
-        db.session.add(ticket)
-        db.session.flush()
-        spot.status = SpotStatusEnum.occupied
-        floor.available_spots -= 1
-        db.session.add(OccupancyLog(
-            spot_id=spot.spot_id,
-            changed_at=datetime.utcnow(),
-            change_type=OccupancyChangeEnum.occupied,
-        ))
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        return jsonify({'error': 'server_error', 'message': 'Failed to create ticket'}), 500
-
-    response = {
-        'ticketId':     ticket.ticket_id,
-        'licensePlate': license_plate,
-        'assignedFloor': floor.floor_number,
-        'entryTime':    ticket.entry_timestamp.isoformat() + 'Z',
-        'status':       'active',
-    }
-    if phone:
-        response['phone'] = phone
-
-    return jsonify(response), 201
 
 
 def _ticket_json(ticket):
@@ -232,91 +111,6 @@ def get_ticket(ticket_id):
         return jsonify({'error': 'ticket_not_found', 'message': 'No ticket found with that ID'}), 404
     return jsonify(_ticket_json(ticket)), 200
 
-
-_STATUS_MAP = {
-    ReservationStatusEnum.confirmed: 'confirmed',
-    ReservationStatusEnum.fulfilled: 'complete',
-    ReservationStatusEnum.expired:   'expired',
-    ReservationStatusEnum.cancelled: 'cancelled',
-}
-
-
-@app.route('/v1/reservations', methods=['POST'])
-def post_reservation():
-    data = request.get_json(silent=True) or {}
-
-    phone            = data.get('phone')
-    scheduled_arrival = data.get('scheduledArrival')
-    driver_class     = data.get('driverClass')
-
-    # Step 1 — Validate input
-    if not phone or not scheduled_arrival:
-        missing = 'phone' if not phone else 'scheduledArrival'
-        return jsonify({'error': 'missing_required_field', 'message': f'{missing} is required'}), 400
-
-    try:
-        parsed_arrival = datetime.fromisoformat(scheduled_arrival.replace('Z', '+00:00'))
-    except (ValueError, AttributeError):
-        return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival is not a valid ISO 8601 datetime'}), 400
-
-    from datetime import timezone
-    now = datetime.now(timezone.utc)
-    if parsed_arrival <= now:
-        return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival must be in the future'}), 400
-
-    # Step 2 — Find advisory floor
-    effective_class = driver_class if driver_class in _DRIVER_CLASS_TO_SPOT_TYPE else 'standard'
-    spot, floor = assign_spot(effective_class)
-    if not spot:
-        return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
-
-    # Step 3 — Create Reservation (do NOT mark spot occupied)
-    reservation = Reservation(
-        phone=phone,
-        start_datetime=parsed_arrival.replace(tzinfo=None),
-        customer_id=None,
-        vehicle_id=None,
-        floor_number=floor.floor_number,
-        status=ReservationStatusEnum.confirmed,
-    )
-    try:
-        db.session.add(reservation)
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        return jsonify({'error': 'server_error', 'message': 'Failed to create reservation'}), 500
-
-    return jsonify({
-        'reservationId':    f'R-{reservation.reservation_id:04d}',
-        'assignedFloor':    floor.floor_number,
-        'scheduledArrival': scheduled_arrival,
-        'status':           'confirmed',
-    }), 201
-
-
-@app.route('/v1/reservations', methods=['GET'])
-def get_reservations():
-    phone = request.args.get('phone')
-    if not phone:
-        return jsonify({'error': 'missing_required_field', 'message': 'phone is required'}), 400
-
-    include_old = request.args.get('includeOld', 'false').lower() == 'true'
-
-    q = Reservation.query.filter_by(phone=phone)
-    if not include_old:
-        q = q.filter_by(status=ReservationStatusEnum.confirmed)
-    reservations = q.order_by(Reservation.start_datetime).all()
-
-    result = [
-        {
-            'reservationId':    f'R-{r.reservation_id:04d}',
-            'assignedFloor':    r.floor_number if r.floor_number is not None else -1,
-            'scheduledArrival': r.start_datetime.isoformat() + 'Z',
-            'status':           _STATUS_MAP[r.status],
-        }
-        for r in reservations
-    ]
-    return jsonify(result), 200
 
 
 _VALID_PAYMENT_METHODS = {'cash', 'card', 'mobile'}
@@ -390,9 +184,11 @@ def put_ticket_exit(ticket_id):
 #  Blueprints — imported after models to avoid circular imports
 # ------------------------------------------------------------------
 
+from routes import v1_bp
 from auth import auth_bp
 from staff_routes import staff_bp
 
+app.register_blueprint(v1_bp)
 app.register_blueprint(auth_bp)
 app.register_blueprint(staff_bp)
 
