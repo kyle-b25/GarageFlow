@@ -1,0 +1,126 @@
+GarageFlow 
+Task 5: Data Constraints to maintain validity
+
+This section defines the data constraints applied to each data entity established in Task 3 and 4 
+to maintain the validity of the database 
+
+PK: Primary Key
+FK: Foreign Key
+
+---
+
+Structure of a Garage
+
+garage
+  • garage_id --> PK, NOT NULL
+  • name --> NOT NULL
+  • total_capacity --> NOT NULL, CHECK (total_capacity > 0)
+  • number_of_floors --> NOT NULL, CHECK (number_of_floors > 0)
+  • operating_hours --> NOT NULL
+  • front_desk_phone --> NULLABLE
+
+floor
+  • floor_id --> PK, NOT NULL
+  • garage_id --> FK, NOT NULL 
+  • floor_number --> NOT NULL, CHECK (floor_number >= 0)
+  • floor_name --> NULLABLE
+  • total_spots --> NOT NULL, CHECK (total_spots > 0)
+  • available_spots --> NOT NULL, (available_spots >= 0 AND available_spots <= total_spots)
+
+parking_spot
+  • spot_id --> PK, NOT NULL
+  • floor_id --> FK, NOT NULL, UNIQUE
+  • spot_type --> NOT NULL (ENUM: standard, handicap, staff)
+  • status --> NOT NULL (ENUM: available, occupied, out_of_order)
+  • location_reference --> NULLABLE, UNIQUE
+
+gate_event
+  • gate_id --> PK, NOT NULL
+  • garage_id --> FK, NOT NULL
+  • gate_type --> NOT NULL (ENUM: entry, exit)
+  • status --> NOT NULL (ENUM: open, closed, out_of_order)
+
+---
+
+Users
+
+customer
+  • customer_id --> PK, NOT NULL
+  • name --> NOT NULL
+  • email --> NOT NULL, UNIQUE
+  • phone_number --> NOT NULL, UNIQUE
+  • date_created --> NOT NULL
+  • account_status --> NOT NULL (ENUM: active, suspended, deleted)
+
+vehicle
+  • vehicle_id --> PK, NOT NULL 
+  • license_plate --> NOT NULL, UNIQUE
+  • plate_state --> NOT NULL, UNIQUE
+  • vehicle_type --> NOT NULL (ENUM: car, motorcycle, truck)
+  • customer_id --> FK, NOT NULL 
+
+staff
+  • operator_id --> PK, NOT NULL
+  • name --> NOT NULL
+  • role --> NOT NULL (ENUM: admin, attendant)
+  • username --> NOT NULL, UNIQUE
+  • password_hash --> NOT NULL
+
+---
+
+Parking Process
+
+ticket
+  • ticket_id --> PK, NOT NULL
+  • entry_timestamp --> NOT NULL
+  • exit_timestamp --> NULLABLE, CHECK (exit_timestamp >= entry_timestamp)
+  • entry_gate_id --> FK, NOT NULL
+  • exit_gate_id --> FK, NOT NULL
+  • spot_id --> FK, NOT NULL
+  • vehicle_id --> FK, NOT NULL
+  • status --> NOT NULL (ENUM: active, closed, lost, voided)
+  • duration --> NULLABLE, CHECK (duration >= 0)
+  • total_fee --> NULLABLE, CHECK (total_fee >= 0)
+
+payment
+  • payment_id --> PK, NOT NULL
+  • ticket_id --> FK, NOT NULL
+  • amount_charged --> NOT NULL, CHECK (amount_charged >=0)
+  • payment_method --> NOT NULL (ENUM: cash, card, mobile)
+  • payment_timestamp --> NOT NULL
+  • payment_status --> NOT NULL (ENUM: paid, pending, failed, refunded)
+
+reservation
+  • reservation_id --> PK, NOT NULL
+  • customer_id --> FK, NOT NULL
+  • vehicle_id --> FK, NOT NULL
+  • start_datetime --> NOT NULL
+  • end_datetime --> NOT NULL, CHECK (end_datetime > start_datetime)
+  • status --> NOT NULL (ENUM: confirmed, cancelled, fulfilled, expired)
+  • create_at --> NOT NULL 
+  • quoted_fee --> NOT NULL, CHECK (quoted_fee >= 0)
+
+---
+
+System Analytics
+
+occupancy_log
+  • log_id --> PK, NOT NULL
+  • spot_id --> FK, NOT NULL
+  • changed_at --> NOT NULL 
+  • changed_type --> NOT NULL (ENUM: occupied, freed)
+
+system_event
+  • event_id --> PK, NOT NULL 
+  • source --> NOT NULL 
+  • description --> NOT NULL
+
+---
+
+Operations
+  • rate_id --> PK, NOT NULL
+  • rate_name --> NOT NULL 
+  • applicable_hours --> NOT NULL
+  • pricing_model --> NOT NULL (ENUM: flat, hourly, special)
+  • description --> NOT NULL 
+  • program --> NOT NULL
