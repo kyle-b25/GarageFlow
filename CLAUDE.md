@@ -58,6 +58,9 @@ Environment variables are loaded from `.env` via `python-dotenv`. Key vars: `SEC
 | GET | `/v1/floors` | Staff | Floor availability with zone breakdown |
 | POST | `/v1/staff` | Admin | Create staff account |
 | POST | `/v1/webhooks/stripe` | — | Stripe webhook (signature-verified) |
+| GET | `/v1/analytics/utilization` | Staff | Daily entry/exit counts from OccupancyLog (`?from=&to=`) |
+| GET | `/v1/analytics/revenue` | Staff | Revenue totals and avg fee for closed tickets (`?from=&to=`) |
+| GET | `/v1/analytics/peak-hours` | Staff | Hourly entry distribution (0–23) (`?from=&to=`) |
 
 ### Driver Class → Spot Type Mapping
 
