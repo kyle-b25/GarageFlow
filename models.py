@@ -297,6 +297,7 @@ class Payment(db.Model):
     payment_method    = db.Column(db.Enum(PaymentMethodEnum),  nullable=False)
     payment_timestamp = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
     payment_status    = db.Column(db.Enum(PaymentStatusEnum),  nullable=False, default=PaymentStatusEnum.pending)
+    stripe_payment_intent_id = db.Column(db.String(100), nullable=True, unique=True)
 
     # Relationships
     ticket = db.relationship("Ticket", back_populates="payment")

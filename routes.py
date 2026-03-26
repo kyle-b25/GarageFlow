@@ -10,8 +10,13 @@ The four endpoints the operator kiosk frontend depends on:
 No authentication required.  Registered in app.py as v1_bp.
 """
 
+import math
+import os
 import re
 from datetime import datetime, timezone
+from decimal import Decimal
+
+import stripe
 from flask import Blueprint, request, jsonify
 
 v1_bp = Blueprint('v1', __name__, url_prefix='/v1')
@@ -29,6 +34,8 @@ _DRIVER_CLASS_TO_SPOT_TYPE = {
 }
 
 VALID_DRIVER_CLASSES = set(_DRIVER_CLASS_TO_SPOT_TYPE.keys())
+
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
 
 _STATUS_MAP = {}  # populated on first use (deferred import)
 
@@ -426,3 +433,182 @@ def get_capacity_floor(floorId):
         db.session.rollback()
         _log_error('routes.get_capacity_floor', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch floor capacity'}), 500
+
+
+# ------------------------------------------------------------------
+#  Stripe webhook helpers
+# ------------------------------------------------------------------
+
+def _is_duplicate_event(event_id):
+    """Check if a Stripe event has already been processed."""
+    from app import db
+    from models import SystemEvent
+
+    existing = SystemEvent.query.filter_by(source='stripe_webhook').filter(
+        SystemEvent.description.contains(event_id)
+    ).first()
+    if existing:
+        return True
+
+    db.session.add(SystemEvent(
+        source='stripe_webhook',
+        description=f'Processing event {event_id}',
+    ))
+    db.session.commit()
+    return False
+
+
+def _find_payment_by_intent(intent_id):
+    """Look up a Payment by its Stripe PaymentIntent ID."""
+    from models import Payment
+    return Payment.query.filter_by(stripe_payment_intent_id=intent_id).first()
+
+
+def _handle_payment_succeeded(intent_data):
+    from app import db
+    from models import PaymentStatusEnum, TicketStatusEnum
+
+    try:
+        intent_id = intent_data['id']
+        payment = _find_payment_by_intent(intent_id)
+        if not payment:
+            _log_error('stripe_webhook', f'No payment found for intent {intent_id}')
+            return
+
+        payment.payment_status = PaymentStatusEnum.paid
+        ticket = payment.ticket
+
+        if ticket.status == TicketStatusEnum.active:
+            if not ticket.exit_timestamp:
+                ticket.exit_timestamp = datetime.utcnow()
+            duration_minutes = math.ceil(
+                (ticket.exit_timestamp - ticket.entry_timestamp).total_seconds() / 60
+            )
+            ticket.duration = duration_minutes
+            ticket.total_fee = Decimal('5.00') + Decimal('2.00') * math.ceil(duration_minutes / 60)
+            ticket.status = TicketStatusEnum.closed
+
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('stripe_webhook.payment_succeeded', str(exc))
+
+
+def _handle_payment_failed(intent_data):
+    from app import db
+    from models import PaymentStatusEnum, SystemEvent
+
+    try:
+        intent_id = intent_data['id']
+        payment = _find_payment_by_intent(intent_id)
+        if not payment:
+            _log_error('stripe_webhook', f'No payment found for intent {intent_id}')
+            return
+
+        payment.payment_status = PaymentStatusEnum.failed
+
+        error_msg = intent_data.get('last_payment_error', {}).get('message', 'unknown')
+        db.session.add(SystemEvent(
+            source='stripe_webhook',
+            description=f'Payment failed for intent {intent_id}: {error_msg}',
+        ))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('stripe_webhook.payment_failed', str(exc))
+
+
+def _handle_payment_canceled(intent_data):
+    from app import db
+    from models import PaymentStatusEnum, TicketStatusEnum, SystemEvent
+
+    try:
+        intent_id = intent_data['id']
+        payment = _find_payment_by_intent(intent_id)
+        if not payment:
+            _log_error('stripe_webhook', f'No payment found for intent {intent_id}')
+            return
+
+        payment.payment_status = PaymentStatusEnum.failed
+        payment.ticket.status = TicketStatusEnum.voided
+
+        db.session.add(SystemEvent(
+            source='stripe_webhook',
+            description=f'Payment canceled for intent {intent_id}',
+        ))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('stripe_webhook.payment_canceled', str(exc))
+
+
+def _handle_charge_refunded(charge_data):
+    from app import db
+    from models import PaymentStatusEnum, SystemEvent
+
+    try:
+        intent_id = charge_data.get('payment_intent')
+        if not intent_id:
+            _log_error('stripe_webhook', 'charge.refunded event missing payment_intent')
+            return
+
+        payment = _find_payment_by_intent(intent_id)
+        if not payment:
+            _log_error('stripe_webhook', f'No payment found for intent {intent_id}')
+            return
+
+        payment.payment_status = PaymentStatusEnum.refunded
+
+        db.session.add(SystemEvent(
+            source='stripe_webhook',
+            description=f'Payment refunded for intent {intent_id}',
+        ))
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('stripe_webhook.charge_refunded', str(exc))
+
+
+# ------------------------------------------------------------------
+#  POST /v1/webhooks/stripe
+# ------------------------------------------------------------------
+
+@v1_bp.route('/webhooks/stripe', methods=['POST'])
+def stripe_webhook():
+    from app import db
+
+    # Step 1 — Signature verification
+    payload = request.get_data()
+    sig_header = request.headers.get('Stripe-Signature')
+
+    if not STRIPE_WEBHOOK_SECRET:
+        _log_error('stripe_webhook', 'STRIPE_WEBHOOK_SECRET not configured')
+        return jsonify({'error': 'webhook_not_configured'}), 500
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except (ValueError, stripe.error.SignatureVerificationError):
+        return jsonify({'error': 'invalid_signature'}), 401
+
+    # Step 2 — Deduplication
+    if _is_duplicate_event(event['id']):
+        return jsonify({'status': 'duplicate'}), 200
+
+    # Step 3 — Dispatch to handler
+    event_type = event['type']
+    event_data = event['data']['object']
+
+    try:
+        if event_type == 'payment_intent.succeeded':
+            _handle_payment_succeeded(event_data)
+        elif event_type == 'payment_intent.payment_failed':
+            _handle_payment_failed(event_data)
+        elif event_type == 'payment_intent.canceled':
+            _handle_payment_canceled(event_data)
+        elif event_type == 'charge.refunded':
+            _handle_charge_refunded(event_data)
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('stripe_webhook', f'Handler error for {event_type}: {exc}')
+
+    return jsonify({'status': 'ok'}), 200
