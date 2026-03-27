@@ -280,7 +280,19 @@
 
   <div class="header">
     <div class="logo-icon">🏢</div>
-    <div class="brand-name">GarageFlow</div>
+    <div style="display:flex; align-items:baseline; gap:16px;">
+      <div class="brand-name">GarageFlow   </div>
+      <div id="garage-name" style="
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: clamp(18px, 3vw, 36px);
+        letter-spacing: 0.02em;
+        background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        line-height: 1;
+      ">—</div>
+    </div>
   </div>
 
   <div class="main-grid">
@@ -324,7 +336,12 @@
 
     <!-- ── Parking Reservation Entry ── -->
     <div class="panel" id="panel-reservation">
-      <div class="panel-title">Parking Reservation Entry</div>
+      <div class="panel-title" style="display:flex; justify-content:space-between; align-items:baseline;">
+        Parking Reservation Entry
+        <span style="font-family:'DM Sans',sans-serif; font-size:13px; font-weight:500; color:var(--text-muted); letter-spacing:0.03em;">
+          📞 <span id="garage-phone">—</span>
+        </span>
+      </div>
 
       <!-- phone: required per spec -->
       <div class="field">

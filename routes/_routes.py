@@ -470,6 +470,35 @@ def get_capacity_floor(floorId):
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch floor capacity'}), 500
 
 
+
+# ------------------------------------------------------------------
+#  GET /v1/garage
+#  Sam Gibney 3/27/2026
+# ------------------------------------------------------------------
+
+@v1_bp.route('/garage', methods=['GET'])
+def get_garage():
+    from app import db
+    from models import Garage
+
+    try:
+        garage = Garage.query.first()
+        if not garage:
+            return jsonify({'error': 'garage_not_found', 'message': 'No garage configured'}), 404
+        return jsonify({
+            'garageId':        garage.garage_id,
+            'name':            garage.name,
+            'totalCapacity':   garage.total_capacity,
+            'numberOfFloors':  garage.number_of_floors,
+            'operatingHours':  garage.operating_hours,
+            'frontDeskPhone':  garage.front_desk_phone,
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('routes.get_garage', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch garage info'}), 500
+        
+        
 # ------------------------------------------------------------------
 #  Stripe webhook helpers
 # ------------------------------------------------------------------

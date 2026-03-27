@@ -10,6 +10,7 @@ import {
   getReservationsByPhone,
   getAllFloors,
   getUpcomingReservations,
+  getGarage,
 } from './api.js';
 
 
@@ -115,9 +116,8 @@ async function handleResFinish() {
     );
     // Clear form
     document.getElementById('res-phone').value = '';
-    document.getElementById('res-arrival-date').value = '';
-    document.getElementById('res-arrival-time').value = '';
     document.getElementById('res-driver-class').value = '';
+    setDefaultArrival();
   } catch (err) {
     showFeedback(feedback, `⚠️ ${err.message}`, true);
   } finally {
@@ -233,12 +233,45 @@ async function showFloor() {
   }
 }
 
+// =============================================================
+//  GARAGE INFO  — populate header on load
+//  Sam Gibney 3/27/2026
+// =============================================================
+
+async function loadGarageName() {
+  try {
+    const garage = await getGarage();
+
+    const nameEl = document.getElementById('garage-name');
+    if (nameEl && garage?.name) nameEl.textContent = garage.name;
+
+    const phoneEl = document.getElementById('garage-phone');
+    if (phoneEl && garage?.frontDeskPhone) phoneEl.textContent = garage.frontDeskPhone;
+  } catch (_) {
+    // Silently leave fallback values if the API call fails
+  }
+}
+
+/** Pre-fill the scheduled arrival fields to 15 minutes from now. */
+function setDefaultArrival() {
+  const soon = new Date(Date.now() + 15 * 60 * 1000);
+  const date = soon.getFullYear() + '-'
+    + String(soon.getMonth() + 1).padStart(2, '0') + '-'
+    + String(soon.getDate()).padStart(2, '0');
+  const time = String(soon.getHours()).padStart(2, '0') + ':'
+    + String(soon.getMinutes()).padStart(2, '0');
+
+  document.getElementById('res-arrival-date').value = date;
+  document.getElementById('res-arrival-time').value = time;
+}
 
 // =============================================================
 //  WIRE UP  — runs once DOM is ready
 // =============================================================
 
 document.addEventListener('DOMContentLoaded', () => {
+	loadGarageName();
+	setDefaultArrival();
 
   // Store original labels so setLoading() can restore them
   document.querySelectorAll('.btn').forEach(btn => {

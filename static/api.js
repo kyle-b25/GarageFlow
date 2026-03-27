@@ -143,3 +143,23 @@ export async function getUpcomingReservations(limit = 5) {
 export async function getAllFloors() {
   return _request('GET', '/v1/floors');
 }
+
+// =============================================================
+//  GARAGE INFO  —  GET /v1/garage
+// =============================================================
+
+/**
+ * GET /v1/garage
+ * Fetch top-level garage metadata (name, capacity, hours, etc.)
+ * @returns {Promise<{
+ *   garageId: number,
+ *   name: string,
+ *   totalCapacity: number,
+ *   numberOfFloors: number,
+ *   operatingHours: string,
+ *   frontDeskPhone: string
+ * }>}
+ */
+export async function getGarage() {
+  return _request('GET', '/v1/garage');
+}
