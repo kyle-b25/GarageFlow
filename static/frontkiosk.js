@@ -9,6 +9,7 @@ import {
   postReservation,
   getReservationsByPhone,
   getAllFloors,
+  getUpcomingReservations,
 } from './api.js';
 
 
@@ -149,6 +150,19 @@ async function searchRes() {
   }
 }
 
+async function showUpcoming() {
+  const btn = document.getElementById('btn-upcoming');
+  setLoading(btn, true);
+  try {
+    const results = await getUpcomingReservations(5);
+    renderTable(results);
+  } catch (err) {
+    alert(`Could not load upcoming reservations: ${err.message}`);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 function renderTable(rows) {
   const tbody = document.getElementById('res-tbody');
   if (!rows || !rows.length) {
@@ -171,37 +185,47 @@ function renderTable(rows) {
 // =============================================================
 
 async function showFloor() {
-  const btn = document.getElementById('btn-floor-show');
-  setLoading(btn, true);
+  const btn     = document.getElementById('btn-floor-show');
+  const cards   = document.getElementById('floor-cards');
+  const visible = btn.dataset.visible === 'true';
 
+  // If data is showing, hide it and reset
+  if (visible) {
+    cards.style.display = 'none';
+    btn.dataset.visible = 'false';
+    btn.textContent     = 'Load Floor Data';
+    return;
+  }
+
+  // Otherwise load (or just re-show if already loaded)
+  setLoading(btn, true);
   try {
     const floors = await getAllFloors();
-    const container = document.getElementById('floor-cards');
-
-    if (!floors.length) {
-      container.innerHTML = '<p style="color:var(--text-dim)">No floor data available</p>';
-      return;
-    }
-
-    container.innerHTML = floors.map(f => {
-      const zones = f.zones || {};
-      const zoneKeys = Object.keys(zones).sort();
-      const zoneRows = zoneKeys.map(z =>
-        `<div class="zone-row">
-          <span class="zone-key">Zone ${z}</span>
-          <span class="zone-val${zones[z] === 'Full' ? ' full' : ''}">${zones[z]}</span>
-        </div>`
-      ).join('');
-
-      return `<div class="zone-card">
-        <div class="zone-card-title">${f.floor}</div>
+    cards.innerHTML = '';
+    floors.forEach(f => {
+      const zoneRows = Object.entries(f.zones).map(([letter, val]) => `
         <div class="zone-row">
-          <span class="zone-key">Available</span>
-          <span class="zone-val">${f.available ?? '—'}</span>
+          <span class="zone-key">Zone ${letter}</span>
+          <span class="zone-val ${val === 'Full' ? 'full' : ''}">${val}</span>
         </div>
-        ${zoneRows || '<div class="zone-row"><span class="zone-key" style="color:var(--text-dim)">No zones</span></div>'}
-      </div>`;
-    }).join('');
+      `).join('');
+
+      cards.innerHTML += `
+        <div class="zone-card">
+          <div class="zone-card-title">${f.floor}</div>
+          <div class="zone-row">
+            <span class="zone-key">Available</span>
+            <span class="zone-val">${f.available}</span>
+          </div>
+          ${zoneRows}
+        </div>
+      `;
+    });
+
+    cards.style.display = 'grid';
+    btn.dataset.visible = 'true';
+    btn.textContent     = 'Hide Floor Data';
+	btn.dataset.label   = 'Hide Floor Data';
   } catch (err) {
     alert(`Could not load floor data: ${err.message}`);
   } finally {
@@ -235,5 +259,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-floor-show')
     .addEventListener('click', showFloor);
+	
+  document.getElementById('btn-upcoming')
+    .addEventListener('click', showUpcoming);
 
 });

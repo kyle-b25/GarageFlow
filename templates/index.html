@@ -1,4 +1,5 @@
 <!--Sam Gibney 3/16/2026-->
+<!--HTML for front kiosk interface-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -316,7 +317,7 @@
       <div class="panel-title">Floor Overview</div>
 
       <div style="margin-bottom:14px;">
-        <button class="btn btn-secondary" id="btn-floor-show">Load Floor Data</button>
+        <button class="btn btn-secondary" id="btn-floor-show" data-visible="false">Load Floor Data</button>
       </div>
       <div id="floor-cards" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px;"></div>
     </div>
@@ -364,6 +365,10 @@
       <!-- Search -->
       <div class="sub-section">
         <div class="sub-title">Search Reservations</div>
+		
+		<div style="margin-bottom:12px;">
+          <button class="btn btn-secondary" id="btn-upcoming" style="width:100%;">Show Upcoming</button>
+        </div>
 
         <div class="search-row">
           <div class="field" style="margin-bottom:0">

@@ -1,7 +1,6 @@
 // =============================================================
 //  api.js — GarageFlow API Layer
 //  All communication with the backend lives here.
-//  Update BASE_URL to point to your real API server.
 // =============================================================
 
 const BASE_URL = 'http://127.0.0.1:5000'; // local Flask dev server
@@ -120,9 +119,20 @@ export async function getReservationsByPhone(phone, includeOld = false) {
   return _request('GET', `/v1/reservations?${params}`);
 }
 
+// =============================================================
+//  RESERVATIONS  - GET /v1/erservations/upcoming
+// =============================================================
+
+//Added 3/26/2026.
+//makes gives useful information to operator.
+export async function getUpcomingReservations(limit = 5) {
+  const params = new URLSearchParams({ limit });
+  return _request('GET', `/v1/reservations/upcoming?${params}`);
+}
+
 
 // =============================================================
-//  FLOOR / AVAILABILITY  —  GET /v1/floors  (future)
+//  FLOOR / AVAILABILITY  —  GET /v1/floors
 // =============================================================
 
 /**

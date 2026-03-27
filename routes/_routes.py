@@ -297,6 +297,56 @@ def get_reservations():
 
 
 # ------------------------------------------------------------------
+#  GET /v1/reservations/upcoming?limit=10
+# ------------------------------------------------------------------
+
+@v1_bp.route('/reservations/upcoming', methods=['GET'])
+def get_upcoming_reservations():
+    from app import db
+    from models import Reservation, ReservationStatusEnum
+
+    try:
+        limit = request.args.get('limit', 10)
+        try:
+            limit = int(limit)
+            if limit < 1 or limit > 100:
+                return jsonify({'error': 'invalid_limit', 'message': 'limit must be between 1 and 100'}), 400
+        except ValueError:
+            return jsonify({'error': 'invalid_limit', 'message': 'limit must be a whole number'}), 400
+
+        now = datetime.utcnow()
+
+
+        reservations = (
+            Reservation.query
+            .filter(
+                Reservation.status == ReservationStatusEnum.confirmed,
+                Reservation.start_datetime >= now,
+            )
+            .order_by(Reservation.start_datetime.asc())
+            .limit(limit)
+            .all()
+        )
+
+        status_map = _get_status_map()
+        result = [
+            {
+                'reservationId':    f'R-{r.reservation_id:04d}',
+                'phone':            r.phone,
+                'assignedFloor':    r.floor_number if r.floor_number is not None else -1,
+                'scheduledArrival': r.start_datetime.isoformat() + 'Z',
+                'status':           status_map[r.status],
+            }
+            for r in reservations
+        ]
+        return jsonify(result), 200
+
+    except Exception as exc:
+        db.session.rollback()
+        _log_error('routes.get_upcoming_reservations', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch upcoming reservations'}), 500
+
+# ------------------------------------------------------------------
 #  GET /v1/floors
 # ------------------------------------------------------------------
 
