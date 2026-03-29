@@ -1,12 +1,12 @@
 """
-routes.py — GarageFlow Public API Blueprint
+routes/_routes.py — GarageFlow Public API Blueprint
 
-The four endpoints the operator kiosk frontend depends on:
-  POST /v1/tickets
+Endpoints the operator kiosk frontend depends on:
   POST /v1/reservations
   GET  /v1/reservations
   GET  /v1/floors
 
+Ticket endpoints have moved to routes/tickets.py.
 No authentication required.  Registered in app.py as v1_bp.
 """
 
@@ -17,7 +17,10 @@ from datetime import datetime
 import stripe
 from flask import Blueprint, request, jsonify
 
-from utils import log_error, calculate_duration, calculate_fee
+from utils import (
+    log_error, calculate_duration, calculate_fee,
+    assign_spot, _DRIVER_CLASS_TO_SPOT_TYPE,
+)
 
 v1_bp = Blueprint('v1', __name__, url_prefix='/v1')
 
@@ -25,15 +28,6 @@ v1_bp = Blueprint('v1', __name__, url_prefix='/v1')
 # ------------------------------------------------------------------
 #  Shared constants
 # ------------------------------------------------------------------
-
-_DRIVER_CLASS_TO_SPOT_TYPE = {
-    'standard':      'standard',
-    'accessibility': 'accessibility',
-    'employee':      'staff',
-    'eco':           'staff',
-}
-
-VALID_DRIVER_CLASSES = set(_DRIVER_CLASS_TO_SPOT_TYPE.keys())
 
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
 
@@ -57,38 +51,6 @@ def _get_status_map():
 #  Helpers
 # ------------------------------------------------------------------
 
-def assign_spot(driver_class):
-    """
-    Find the best available (spot, floor) pair for the given driver class.
-
-    Floors are sorted by availability ratio (available/total) descending,
-    tiebreak by floor_number ascending.
-
-    Returns (spot, floor) on success, or (None, None) if garage is full.
-    """
-    from models import Floor, ParkingSpot, SpotTypeEnum, SpotStatusEnum
-
-    spot_type_val = SpotTypeEnum(_DRIVER_CLASS_TO_SPOT_TYPE[driver_class])
-
-    floors = [f for f in Floor.query.filter(Floor.available_spots > 0).all()
-              if f.total_spots > 0]
-    if not floors:
-        return None, None
-
-    floors.sort(key=lambda f: (-(f.available_spots / f.total_spots), f.floor_number))
-
-    for floor in floors:
-        spot = ParkingSpot.query.filter_by(
-            floor_id=floor.floor_id,
-            spot_type=spot_type_val,
-            status=SpotStatusEnum.available,
-        ).first()
-        if spot:
-            return spot, floor
-
-    return None, None
-
-
 def _count_spots(spots):
     """Tally spot counts by type. Returns (total, occupied, available, by_type dict)."""
     from models import SpotTypeEnum, SpotStatusEnum
@@ -110,92 +72,6 @@ def _count_spots(spots):
     available = sum(b['available'] for b in by_type.values())
 
     return total, occupied, available, by_type
-
-
-# ------------------------------------------------------------------
-#  POST /v1/tickets
-# ------------------------------------------------------------------
-
-@v1_bp.route('/tickets', methods=['POST'])
-def post_ticket():
-    from app import db
-    from models import (
-        Floor, Vehicle, Ticket, OccupancyLog,
-        SpotStatusEnum, VehicleTypeEnum, TicketStatusEnum, OccupancyChangeEnum,
-    )
-
-    data = request.get_json(silent=True) or {}
-
-    license_plate = data.get('licensePlate')
-    driver_class  = data.get('driverClass')
-    phone         = data.get('phone')
-
-    # Validate input
-    if not license_plate or not driver_class:
-        missing = 'licensePlate' if not license_plate else 'driverClass'
-        return jsonify({'error': 'missing_required_field', 'message': f'{missing} is required'}), 400
-
-    if driver_class not in VALID_DRIVER_CLASSES:
-        return jsonify({
-            'error': 'invalid_driver_class',
-            'message': f'driverClass must be one of: {", ".join(sorted(VALID_DRIVER_CLASSES))}',
-        }), 400
-
-    # Check global availability
-    if not Floor.query.filter(Floor.available_spots > 0).first():
-        return jsonify({'error': 'garage_full', 'message': 'Garage is full'}), 503
-
-    try:
-        # Get or create Vehicle
-        vehicle = Vehicle.query.filter_by(license_plate=license_plate).first()
-        if not vehicle:
-            vehicle = Vehicle(
-                license_plate=license_plate,
-                vehicle_type=VehicleTypeEnum.car,
-                customer_id=None,
-            )
-            db.session.add(vehicle)
-            db.session.flush()
-
-        # Duplicate active ticket check
-        if Ticket.query.filter_by(vehicle_id=vehicle.vehicle_id, status=TicketStatusEnum.active).first():
-            return jsonify({'error': 'duplicate_plate', 'message': 'Vehicle already has an active ticket'}), 409
-
-        # Assign spot
-        spot, floor = assign_spot(driver_class)
-        if not spot:
-            return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
-
-        # Create Ticket + mark spot occupied + OccupancyLog
-        ticket = Ticket(
-            vehicle_id=vehicle.vehicle_id,
-            spot_id=spot.spot_id,
-            entry_timestamp=datetime.utcnow(),
-            status=TicketStatusEnum.active,
-        )
-
-        db.session.add(ticket)
-        db.session.flush()
-        spot.status = SpotStatusEnum.occupied
-        floor.available_spots -= 1
-        db.session.add(OccupancyLog(
-            spot_id=spot.spot_id,
-            changed_at=datetime.utcnow(),
-            change_type=OccupancyChangeEnum.occupied,
-        ))
-        db.session.commit()
-    except Exception as exc:
-        db.session.rollback()
-        log_error('routes.post_ticket', str(exc))
-        return jsonify({'error': 'server_error', 'message': 'Failed to create ticket'}), 500
-
-    return jsonify({
-        'ticketId':      ticket.ticket_id,
-        'licensePlate':  license_plate,
-        'assignedFloor': floor.floor_number,
-        'entryTime':     ticket.entry_timestamp.isoformat() + 'Z',
-        'status':        'active',
-    }), 201
 
 
 # ------------------------------------------------------------------

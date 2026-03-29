@@ -294,6 +294,7 @@ class Ticket(db.Model):
     status          = db.Column(db.Enum(TicketStatusEnum), nullable=False, default=TicketStatusEnum.active)
     duration        = db.Column(db.Integer,   nullable=True)       # minutes, set on close
     total_fee       = db.Column(db.Numeric(8, 2), nullable=True)   # set on close
+    phone           = db.Column(db.String(20), nullable=True)
 
     # Relationships
     spot        = db.relationship("ParkingSpot", back_populates="tickets")

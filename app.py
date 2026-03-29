@@ -1,16 +1,13 @@
 """
 app.py — GarageFlow Main Application Entry Point
 
-Creates the Flask app, registers all blueprints, and contains the
-ticket read/exit endpoints and the release_spot helper.
+Creates the Flask app, registers all blueprints.
 """
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, render_template
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
+from datetime import timedelta
 import os
-
-from utils import log_error, calculate_duration, calculate_fee
 
 load_dotenv()
 
@@ -22,11 +19,7 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=365)
 
 db = SQLAlchemy(app)
 
-from models import (
-    Floor, ParkingSpot, Vehicle, Ticket, OccupancyLog,
-    SpotStatusEnum, SpotTypeEnum, VehicleTypeEnum, TicketStatusEnum, OccupancyChangeEnum,
-    Payment, PaymentMethodEnum, PaymentStatusEnum,
-)
+import models  # noqa: F401 — triggers db.create_all() for all tables
 
 with app.app_context():
     db.create_all()
@@ -42,182 +35,18 @@ def health():
     return {'status': 'ok'}
 
 
-
-def release_spot(spot_id, exit_ts):
-    """
-    Free a parking spot: set status to available, increment floor counter,
-    append OccupancyLog. Does NOT commit — caller owns the transaction.
-
-    Returns the ParkingSpot on success, or None if spot_id not found.
-    """
-    spot = ParkingSpot.query.get(spot_id)
-    if not spot:
-        return None
-
-    spot.status = SpotStatusEnum.available
-
-    floor = Floor.query.get(spot.floor_id)
-    if floor:
-        floor.available_spots += 1
-
-    db.session.add(OccupancyLog(
-        spot_id=spot.spot_id,
-        changed_at=exit_ts,
-        change_type=OccupancyChangeEnum.freed,
-    ))
-    return spot
-
-
-
-def _ticket_json(ticket):
-    spot = ParkingSpot.query.get(ticket.spot_id)
-    floor = Floor.query.get(spot.floor_id) if spot else None
-    vehicle = Vehicle.query.get(ticket.vehicle_id)
-    if not spot or not floor or not vehicle:
-        return {
-            'ticketId': ticket.ticket_id,
-            'error': 'incomplete_record',
-            'status': ticket.status.value,
-        }
-    return {
-        'ticketId':     ticket.ticket_id,
-        'licensePlate': vehicle.license_plate,
-        'assignedFloor': floor.floor_number,
-        'spotId':       spot.spot_id,
-        'entryTime':    ticket.entry_timestamp.isoformat() + 'Z',
-        'exitTime':     (ticket.exit_timestamp.isoformat() + 'Z') if ticket.exit_timestamp else None,
-        'duration':     ticket.duration,
-        'totalFee':     float(ticket.total_fee) if ticket.total_fee is not None else None,
-        'status':       ticket.status.value,
-    }
-
-
-@app.route('/v1/tickets', methods=['GET'])
-def get_tickets():
-    status_param = request.args.get('status')
-    plate_param  = request.args.get('licensePlate')
-
-    q = Ticket.query
-    if status_param:
-        try:
-            q = q.filter_by(status=TicketStatusEnum[status_param])
-        except KeyError:
-            valid = [s.value for s in TicketStatusEnum]
-            return jsonify({'error': 'invalid_status', 'message': f'status must be one of: {", ".join(valid)}'}), 400
-
-    try:
-        if plate_param:
-            vehicle = Vehicle.query.filter(
-                Vehicle.license_plate.ilike(plate_param)
-            ).first()
-            if not vehicle:
-                return jsonify([]), 200
-            q = q.filter_by(vehicle_id=vehicle.vehicle_id)
-
-        tickets = q.order_by(Ticket.entry_timestamp.desc()).all()
-        return jsonify([_ticket_json(t) for t in tickets]), 200
-    except Exception as exc:
-        db.session.rollback()
-        log_error('app.get_tickets', str(exc))
-        return jsonify({'error': 'server_error', 'message': 'Failed to fetch tickets'}), 500
-
-
-@app.route('/v1/tickets/<int:ticket_id>', methods=['GET'])
-def get_ticket(ticket_id):
-    try:
-        ticket = Ticket.query.get(ticket_id)
-        if not ticket:
-            return jsonify({'error': 'ticket_not_found', 'message': 'No ticket found with that ID'}), 404
-        return jsonify(_ticket_json(ticket)), 200
-    except Exception as exc:
-        db.session.rollback()
-        log_error('app.get_ticket', str(exc))
-        return jsonify({'error': 'server_error', 'message': 'Failed to fetch ticket'}), 500
-
-
-
-_VALID_PAYMENT_METHODS = {'cash', 'card', 'mobile'}
-_CLOSED_STATUSES = {TicketStatusEnum.closed, TicketStatusEnum.voided, TicketStatusEnum.lost}
-
-
-@app.route('/v1/tickets/<int:ticket_id>/exit', methods=['PUT'])
-def put_ticket_exit(ticket_id):
-    # Step 1 — Look up ticket
-    ticket = Ticket.query.get(ticket_id)
-    if not ticket:
-        return jsonify({'error': 'ticket_not_found', 'message': 'No ticket found with that ID'}), 404
-
-    # Step 2 — Validate status
-    if ticket.status in _CLOSED_STATUSES:
-        return jsonify({'error': 'ticket_already_closed', 'message': 'Ticket is not active'}), 409
-
-    # Step 3 — Parse + validate request body
-    data = request.get_json(silent=True) or {}
-    license_plate  = data.get('licensePlate')
-    payment_method = data.get('paymentMethod')
-
-    if not license_plate:
-        return jsonify({'error': 'missing_required_field', 'message': 'licensePlate is required'}), 400
-    if not payment_method:
-        return jsonify({'error': 'missing_required_field', 'message': 'paymentMethod is required'}), 400
-    if payment_method not in _VALID_PAYMENT_METHODS:
-        return jsonify({'error': 'invalid_payment_method', 'message': f'paymentMethod must be one of: {", ".join(sorted(_VALID_PAYMENT_METHODS))}'}), 400
-
-    # Step 4 — Plate confirmation
-    vehicle = Vehicle.query.get(ticket.vehicle_id)
-    if vehicle.license_plate.lower() != license_plate.lower():
-        return jsonify({'error': 'plate_mismatch', 'message': 'License plate does not match this ticket'}), 409
-
-    # Step 5 — Stamp exit + calculate duration/fee
-    exit_ts = datetime.utcnow()
-    ticket.exit_timestamp = exit_ts
-    ticket.duration = calculate_duration(ticket.entry_timestamp, exit_ts)
-    ticket.total_fee = calculate_fee(ticket.duration)
-    ticket.status = TicketStatusEnum.closed
-
-    # Step 6 — Create Payment
-    db.session.add(Payment(
-        ticket_id=ticket.ticket_id,
-        amount_charged=ticket.total_fee,
-        payment_method=PaymentMethodEnum[payment_method],
-        payment_status=PaymentStatusEnum.pending,
-        payment_timestamp=exit_ts,
-    ))
-
-    # Step 7 — Free spot + update floor counter + OccupancyLog
-    if not release_spot(ticket.spot_id, exit_ts):
-        db.session.rollback()
-        return jsonify({'error': 'server_error', 'message': 'Could not release spot'}), 500
-
-    try:
-        db.session.commit()
-    except Exception as exc:
-        db.session.rollback()
-        log_error('app.put_ticket_exit', str(exc))
-        return jsonify({'error': 'server_error', 'message': 'Failed to process exit'}), 500
-
-    return jsonify({
-        'ticketId':      ticket.ticket_id,
-        'licensePlate':  vehicle.license_plate,
-        'exitTime':      exit_ts.isoformat() + 'Z',
-        'duration':      ticket.duration,
-        'totalFee':      float(ticket.total_fee),
-        'paymentStatus': 'pending',
-        'status':        'closed',
-    }), 200
-
-
 # ------------------------------------------------------------------
 #  Blueprints — imported after models to avoid circular imports
 # ------------------------------------------------------------------
 
-from routes import v1_bp
+from routes import v1_bp, tickets_bp
 from routes.auth import token_auth_bp
 from routes.analytics import analytics_bp
 from staff_routes import staff_bp
 from routes.payments import payments_bp
 
 app.register_blueprint(v1_bp)
+app.register_blueprint(tickets_bp)
 app.register_blueprint(token_auth_bp)
 app.register_blueprint(analytics_bp)
 app.register_blueprint(staff_bp)

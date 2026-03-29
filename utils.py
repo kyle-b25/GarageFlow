@@ -94,3 +94,76 @@ def admin_required(f):
             return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated
+
+
+# ------------------------------------------------------------------
+#  Spot assignment constants & helpers
+# ------------------------------------------------------------------
+
+_DRIVER_CLASS_TO_SPOT_TYPE = {
+    'standard':      'standard',
+    'accessibility': 'accessibility',
+    'employee':      'staff',
+    'eco':           'staff',
+}
+
+VALID_DRIVER_CLASSES = set(_DRIVER_CLASS_TO_SPOT_TYPE.keys())
+
+
+def assign_spot(driver_class):
+    """
+    Find the best available (spot, floor) pair for the given driver class.
+
+    Floors are sorted by floor_number ascending (prefer lowest floor).
+
+    Returns (spot, floor) on success, or (None, None) if garage is full.
+    """
+    from models import Floor, ParkingSpot, SpotTypeEnum, SpotStatusEnum
+
+    spot_type_val = SpotTypeEnum(_DRIVER_CLASS_TO_SPOT_TYPE[driver_class])
+
+    floors = [f for f in Floor.query.filter(Floor.available_spots > 0).all()
+              if f.total_spots > 0]
+    if not floors:
+        return None, None
+
+    floors.sort(key=lambda f: f.floor_number)
+
+    for floor in floors:
+        spot = ParkingSpot.query.filter_by(
+            floor_id=floor.floor_id,
+            spot_type=spot_type_val,
+            status=SpotStatusEnum.available,
+        ).first()
+        if spot:
+            return spot, floor
+
+    return None, None
+
+
+def release_spot(spot_id, exit_ts):
+    """
+    Free a parking spot: set status to available, increment floor counter,
+    append OccupancyLog. Does NOT commit — caller owns the transaction.
+
+    Returns the ParkingSpot on success, or None if spot_id not found.
+    """
+    from app import db
+    from models import ParkingSpot, Floor, OccupancyLog, SpotStatusEnum, OccupancyChangeEnum
+
+    spot = ParkingSpot.query.get(spot_id)
+    if not spot:
+        return None
+
+    spot.status = SpotStatusEnum.available
+
+    floor = Floor.query.get(spot.floor_id)
+    if floor:
+        floor.available_spots += 1
+
+    db.session.add(OccupancyLog(
+        spot_id=spot.spot_id,
+        changed_at=exit_ts,
+        change_type=OccupancyChangeEnum.freed,
+    ))
+    return spot
