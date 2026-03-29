@@ -14,7 +14,9 @@ from datetime import datetime, timedelta
 import bcrypt
 from flask import Blueprint, request, jsonify, g
 
-from utils import get_current_user, admin_required as require_admin
+from utils import get_current_user, require_role
+
+require_admin = require_role('admin')
 
 staff_bp    = Blueprint('staff', __name__)
 

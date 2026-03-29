@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 import bcrypt
 from flask import Blueprint, request, jsonify, g
 
-from utils import login_required, admin_required
+from utils import login_required, require_role
 
 token_auth_bp = Blueprint('token_auth', __name__, url_prefix='/v1/auth')
 
@@ -181,7 +181,7 @@ def me():
 # ------------------------------------------------------------------
 
 @token_auth_bp.route('/register', methods=['POST'])
-@admin_required
+@require_role('admin')
 def register():
     from app import db
     from models import Staff, StaffRoleEnum

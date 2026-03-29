@@ -3,9 +3,15 @@ spaces_bp.py — Parking Spaces and Floors API Blueprint
 
 CRUD endpoints for floors and parking spaces, plus the assign_space() helper.
 """
+from datetime import datetime
+
 from flask import Blueprint, jsonify, request
 from app import db
-from models import Floor, ParkingSpot, SpotTypeEnum, SpotStatusEnum
+from models import (
+    Garage, Floor, ParkingSpot, Ticket,
+    SpotTypeEnum, SpotStatusEnum, TicketStatusEnum,
+    OccupancyLog, OccupancyChangeEnum,
+)
 
 spaces_bp = Blueprint('spaces', __name__, url_prefix='/v1')
 
@@ -32,31 +38,13 @@ def _floor_json(floor):
     }
 
 
-# ── Assignment Helper ────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────
 
-DRIVER_CLASS_MAP = {
-    "accessibility": SpotTypeEnum.accessibility,
-    "employee": SpotTypeEnum.staff,
-    "eco": SpotTypeEnum.standard,
-    "standard": SpotTypeEnum.standard,
-}
-
-
-def assign_space(driver_class):
-    """Return the best available ParkingSpot for the given driver_class, or None."""
-    spot_type = DRIVER_CLASS_MAP.get(driver_class)
-    if spot_type is None:
-        return None
-    return (
-        ParkingSpot.query
-        .join(Floor)
-        .filter(
-            ParkingSpot.status == SpotStatusEnum.available,
-            ParkingSpot.spot_type == spot_type,
-        )
-        .order_by(Floor.floor_number.asc())
-        .first()
-    )
+def _sync_garage(garage):
+    """Recalculate garage total_capacity and number_of_floors from floor records."""
+    floors = Floor.query.filter_by(garage_id=garage.garage_id).all()
+    garage.number_of_floors = len(floors)
+    garage.total_capacity = sum(f.total_spots for f in floors)
 
 
 # ── Space Endpoints ──────────────────────────────────────────────────
@@ -107,6 +95,9 @@ def create_floor():
         total_spots = data.get('totalSpots')
         if garage_id is None or floor_number is None or total_spots is None:
             return jsonify({"error": "missing_required_field"}), 400
+        garage = Garage.query.get(garage_id)
+        if not garage:
+            return jsonify({"error": "garage_not_found"}), 404
         floor = Floor(
             garage_id=garage_id,
             floor_number=floor_number,
@@ -115,6 +106,8 @@ def create_floor():
             available_spots=0,
         )
         db.session.add(floor)
+        db.session.flush()
+        _sync_garage(garage)
         db.session.commit()
         return jsonify(_floor_json(floor)), 201
     except Exception:
@@ -145,7 +138,17 @@ def update_floor(floor_id):
         if 'floorNumber' in data:
             floor.floor_number = data['floorNumber']
         if 'totalSpots' in data:
-            floor.total_spots = data['totalSpots']
+            new_total = data['totalSpots']
+            occupied_count = ParkingSpot.query.filter_by(
+                floor_id=floor_id, status=SpotStatusEnum.occupied
+            ).count()
+            if new_total < occupied_count:
+                return jsonify({"error": "invalid_total_spots",
+                                "message": "totalSpots cannot be less than occupied spots"}), 400
+            floor.total_spots = new_total
+            garage = Garage.query.get(floor.garage_id)
+            if garage:
+                _sync_garage(garage)
         db.session.commit()
         return jsonify(_floor_json(floor)), 200
     except Exception:
@@ -159,7 +162,23 @@ def delete_floor(floor_id):
         floor = Floor.query.get(floor_id)
         if not floor:
             return jsonify({"error": "floor_not_found"}), 404
+        # Block if any spot is occupied or has active tickets
+        has_occupied = ParkingSpot.query.filter_by(
+            floor_id=floor_id, status=SpotStatusEnum.occupied
+        ).first()
+        has_active_tickets = (
+            Ticket.query.join(ParkingSpot)
+            .filter(ParkingSpot.floor_id == floor_id,
+                    Ticket.status == TicketStatusEnum.active)
+            .first()
+        )
+        if has_occupied or has_active_tickets:
+            return jsonify({"error": "floor_has_active_usage"}), 400
+        garage = Garage.query.get(floor.garage_id)
         db.session.delete(floor)
+        db.session.flush()
+        if garage:
+            _sync_garage(garage)
         db.session.commit()
         return jsonify({"message": "floor deleted"}), 200
     except Exception:
@@ -210,8 +229,13 @@ def create_space(floor_id):
             location_reference=data.get('locationReference'),
         )
         db.session.add(spot)
-        floor.total_spots += 1
+        db.session.flush()
+        # Recalculate total_spots from actual count
+        floor.total_spots = ParkingSpot.query.filter_by(floor_id=floor_id).count()
         floor.available_spots += 1
+        garage = Garage.query.get(floor.garage_id)
+        if garage:
+            _sync_garage(garage)
         db.session.commit()
         return jsonify(_space_json(spot)), 201
     except Exception:
@@ -256,11 +280,24 @@ def update_space(floor_id, space_id):
             except ValueError:
                 return jsonify({"error": "invalid_status"}), 400
             old_status = spot.status
-            spot.status = new_status
-            if old_status == SpotStatusEnum.available and new_status != SpotStatusEnum.available:
-                floor.available_spots -= 1
-            elif old_status != SpotStatusEnum.available and new_status == SpotStatusEnum.available:
-                floor.available_spots += 1
+            if old_status != new_status:
+                spot.status = new_status
+                if old_status == SpotStatusEnum.available and new_status != SpotStatusEnum.available:
+                    floor.available_spots -= 1
+                elif old_status != SpotStatusEnum.available and new_status == SpotStatusEnum.available:
+                    floor.available_spots += 1
+                # Log occupancy change
+                if new_status == SpotStatusEnum.occupied:
+                    change = OccupancyChangeEnum.occupied
+                elif new_status == SpotStatusEnum.available:
+                    change = OccupancyChangeEnum.freed
+                else:
+                    change = OccupancyChangeEnum.freed  # out_of_order treated as freed
+                db.session.add(OccupancyLog(
+                    spot_id=spot.spot_id,
+                    changed_at=datetime.utcnow(),
+                    change_type=change,
+                ))
         db.session.commit()
         return jsonify(_space_json(spot)), 200
     except Exception:
@@ -277,10 +314,23 @@ def delete_space(floor_id, space_id):
         spot = ParkingSpot.query.get(space_id)
         if not spot or spot.floor_id != floor_id:
             return jsonify({"error": "space_not_found"}), 404
+        # Block if spot is occupied or has active tickets
+        if spot.status == SpotStatusEnum.occupied:
+            return jsonify({"error": "spot_has_active_usage"}), 400
+        has_active_tickets = Ticket.query.filter_by(
+            spot_id=space_id, status=TicketStatusEnum.active
+        ).first()
+        if has_active_tickets:
+            return jsonify({"error": "spot_has_active_usage"}), 400
         if spot.status == SpotStatusEnum.available:
             floor.available_spots -= 1
-        floor.total_spots -= 1
         db.session.delete(spot)
+        db.session.flush()
+        # Recalculate total_spots from actual count
+        floor.total_spots = ParkingSpot.query.filter_by(floor_id=floor_id).count()
+        garage = Garage.query.get(floor.garage_id)
+        if garage:
+            _sync_garage(garage)
         db.session.commit()
         return jsonify({"message": "space deleted"}), 200
     except Exception:

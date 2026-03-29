@@ -15,7 +15,7 @@ from flask import Blueprint, jsonify, request, g
 
 from app import db
 from models import Staff, StaffRoleEnum, SystemEvent
-from utils import require_role
+from utils import require_role, safe_int
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/v1')
 
@@ -24,7 +24,7 @@ admin_bp = Blueprint('admin', __name__, url_prefix='/v1')
 
 def _user_json(staff):
     return {
-        'userId':   staff.operator_id,
+        'operatorId': staff.operator_id,
         'name':     staff.name,
         'username': staff.username,
         'role':     staff.role.value,
@@ -87,7 +87,12 @@ def delete_user(user_id):
         if not user:
             return jsonify({'error': 'user_not_found'}), 404
 
-        has_audit = SystemEvent.query.filter_by(staff_id=user_id).first()
+        has_audit = SystemEvent.query.filter(
+            db.or_(
+                SystemEvent.staff_id == user_id,
+                SystemEvent.description.contains(f'operator_id={user_id}'),
+            )
+        ).first()
         if has_audit:
             return jsonify({'error': 'delete_blocked_audit_history'}), 409
 
@@ -203,9 +208,12 @@ def get_history():
     try:
         q = SystemEvent.query
 
-        user_id = request.args.get('userId')
-        if user_id:
-            q = q.filter(SystemEvent.staff_id == int(user_id))
+        user_id_param = request.args.get('userId')
+        if user_id_param:
+            user_id_int = safe_int(user_id_param, 'userId')
+            if user_id_int is None:
+                return jsonify({'error': 'invalid_user_id', 'message': 'userId must be an integer'}), 400
+            q = q.filter(SystemEvent.staff_id == user_id_int)
 
         action = request.args.get('action')
         if action:

@@ -67,6 +67,9 @@ def get_current_user():
     if not session_token or session_token.expires_at < datetime.utcnow():
         return None
 
+    if not session_token.staff.is_active:
+        return None
+
     g.current_user = session_token.staff
     g.session_token = session_token
     return session_token.staff
@@ -78,20 +81,6 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if not get_current_user():
             return jsonify({'error': 'unauthorized', 'message': 'Login required'}), 401
-        return f(*args, **kwargs)
-    return decorated
-
-
-def admin_required(f):
-    """Decorator — rejects requests without a valid admin Bearer token."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        from models import StaffRoleEnum
-        user = get_current_user()
-        if not user:
-            return jsonify({'error': 'unauthorized', 'message': 'Login required'}), 401
-        if user.role != StaffRoleEnum.admin:
-            return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated
 
@@ -130,7 +119,7 @@ _DRIVER_CLASS_TO_SPOT_TYPE = {
     'standard':      'standard',
     'accessibility': 'accessibility',
     'employee':      'staff',
-    'eco':           'staff',
+    'eco':           'eco',
 }
 
 VALID_DRIVER_CLASSES = set(_DRIVER_CLASS_TO_SPOT_TYPE.keys())
@@ -193,3 +182,11 @@ def release_spot(spot_id, exit_ts):
         change_type=OccupancyChangeEnum.freed,
     ))
     return spot
+
+
+def safe_int(value, field_name="id"):
+    """Parse value to int, returning None on failure."""
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None

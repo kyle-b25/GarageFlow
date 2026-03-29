@@ -20,7 +20,7 @@ from decimal import Decimal
 import stripe
 from flask import Blueprint, request, jsonify, session
 
-from utils import log_error, login_required, admin_required
+from utils import log_error, login_required, require_role
 
 payments_bp = Blueprint('payments', __name__, url_prefix='/v1/payments')
 
@@ -286,7 +286,7 @@ def refund_payment(payment_id):
 # ------------------------------------------------------------------
 
 @payments_bp.route('/<int:payment_id>/override', methods=['POST'])
-@admin_required
+@require_role('admin')
 def override_payment(payment_id):
     from app import db
     from models import Payment, PaymentStatusEnum, PaymentMethodEnum

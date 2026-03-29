@@ -2,16 +2,16 @@
 routes/_routes.py — GarageFlow Public API Blueprint
 
 Endpoints the operator kiosk frontend depends on:
-  POST /v1/reservations
-  GET  /v1/reservations
-  GET  /v1/floors
+  GET  /v1/capacity
+  GET  /v1/garage
+  POST /v1/webhooks/stripe
 
-Ticket endpoints have moved to routes/tickets.py.
+Ticket endpoints live in routes/tickets.py.
+Reservation endpoints live in reservations_bp.py.
 No authentication required.  Registered in app.py as v1_bp.
 """
 
 import os
-import re
 from datetime import datetime
 
 import stripe
@@ -56,51 +56,6 @@ def _count_spots(spots):
 
     return total, occupied, available, by_type
 
-
-
-# ------------------------------------------------------------------
-#  GET /v1/floors
-# ------------------------------------------------------------------
-
-@v1_bp.route('/floors', methods=['GET'])
-def get_floors():
-    from app import db
-    from models import Floor, SpotStatusEnum
-
-    try:
-        floors = Floor.query.order_by(Floor.floor_number).all()
-        result = []
-
-        for floor in floors:
-            zone_available = {}
-            zone_total     = {}
-
-            for spot in floor.parking_spots:
-                loc = spot.location_reference
-                if not loc:
-                    continue
-                m    = re.search(r'[A-Z]', loc)
-                zone = m.group(0) if m else '_unzoned'
-                zone_total[zone] = zone_total.get(zone, 0) + 1
-                if spot.status == SpotStatusEnum.available:
-                    zone_available[zone] = zone_available.get(zone, 0) + 1
-
-            zones = {
-                z: (zone_available.get(z, 0) if zone_available.get(z, 0) > 0 else 'Full')
-                for z in sorted(zone_total)
-            }
-
-            result.append({
-                'floor': floor.floor_name if floor.floor_name else f'Floor {floor.floor_number}',
-                'available': floor.available_spots,
-                'zones': zones,
-            })
-
-        return jsonify(result), 200
-    except Exception as exc:
-        db.session.rollback()
-        log_error('routes.get_floors', str(exc))
-        return jsonify({'error': 'server_error', 'message': 'Failed to fetch floors'}), 500
 
 
 # ------------------------------------------------------------------
@@ -207,7 +162,7 @@ def get_garage():
         }), 200
     except Exception as exc:
         db.session.rollback()
-        _log_error('routes.get_garage', str(exc))
+        log_error('routes.get_garage', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch garage info'}), 500
         
         
@@ -231,7 +186,7 @@ def _is_duplicate_event(event_id):
         source='stripe_webhook',
         description=event_id,
     ))
-    db.session.commit()
+    # Do not commit here — let the handler's transaction include the dedup record
     return False
 
 
@@ -243,7 +198,10 @@ def _find_payment_by_intent(intent_id):
 
 def _handle_payment_succeeded(intent_data):
     from app import db
-    from models import PaymentStatusEnum, TicketStatusEnum
+    from models import (
+        PaymentStatusEnum, TicketStatusEnum,
+        ParkingSpot, Floor, OccupancyLog, SpotStatusEnum, OccupancyChangeEnum,
+    )
 
     try:
         intent_id = intent_data['id']
@@ -261,6 +219,19 @@ def _handle_payment_succeeded(intent_data):
             ticket.duration = calculate_duration(ticket.entry_timestamp, ticket.exit_timestamp)
             ticket.total_fee = calculate_fee(ticket.duration)
             ticket.status = TicketStatusEnum.closed
+
+            # Release the parking spot
+            spot = ParkingSpot.query.get(ticket.spot_id)
+            if spot and spot.status != SpotStatusEnum.available:
+                spot.status = SpotStatusEnum.available
+                floor = Floor.query.get(spot.floor_id)
+                if floor:
+                    floor.available_spots += 1
+                db.session.add(OccupancyLog(
+                    spot_id=spot.spot_id,
+                    changed_at=ticket.exit_timestamp,
+                    change_type=OccupancyChangeEnum.freed,
+                ))
 
         db.session.commit()
     except Exception as exc:

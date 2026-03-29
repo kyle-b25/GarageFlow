@@ -17,7 +17,7 @@ from flask import Blueprint, request, jsonify
 from utils import (
     log_error, calculate_duration, calculate_fee,
     release_spot, assign_spot, VALID_DRIVER_CLASSES,
-    login_required, admin_required,
+    login_required, require_role,
 )
 
 tickets_bp = Blueprint('tickets', __name__, url_prefix='/v1/tickets')
@@ -329,14 +329,19 @@ def delete_ticket_personal(ticket_id):
 # ------------------------------------------------------------------
 
 @tickets_bp.route('/<int:ticket_id>', methods=['DELETE'])
-@admin_required
+@require_role('admin')
 def delete_ticket(ticket_id):
     from app import db
-    from models import Ticket, Payment
+    from models import Ticket, Payment, TicketStatusEnum
 
     ticket = Ticket.query.get(ticket_id)
     if not ticket:
         return jsonify({'error': 'ticket_not_found', 'message': 'No ticket found with that ID'}), 404
+
+    # Release spot if ticket is active
+    if ticket.status == TicketStatusEnum.active:
+        from datetime import datetime
+        release_spot(ticket.spot_id, datetime.utcnow())
 
     # Delete associated payment first (FK constraint)
     if ticket.payment:

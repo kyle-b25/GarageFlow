@@ -15,16 +15,42 @@ from models import (
     OccupancyLog, OccupancyChangeEnum,
     SpotStatusEnum,
 )
-from utils import assign_spot, log_error, _DRIVER_CLASS_TO_SPOT_TYPE
+from utils import assign_spot, log_error, _DRIVER_CLASS_TO_SPOT_TYPE, VALID_DRIVER_CLASSES
+
+from models import VehicleTypeEnum
 
 reservations_bp = Blueprint('reservations', __name__, url_prefix='/v1/reservations')
+
+
+# ── State Machine ────────────────────────────────────────────────
+
+ALLOWED_TRANSITIONS = {
+    ReservationStatusEnum.confirmed: [
+        ReservationStatusEnum.cancelled,
+        ReservationStatusEnum.fulfilled,
+        ReservationStatusEnum.expired,
+    ],
+    ReservationStatusEnum.cancelled: [],
+    ReservationStatusEnum.fulfilled: [],
+    ReservationStatusEnum.expired:   [],
+}
+
+
+def _parse_reservation_id(raw):
+    """Parse 'R-0001' or '1' into an integer reservation ID, or None."""
+    if isinstance(raw, str) and raw.upper().startswith('R-'):
+        raw = raw[2:]
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return None
 
 
 # ── Serializer ────────────────────────────────────────────────────
 
 STATUS_LABELS = {
     ReservationStatusEnum.confirmed: 'confirmed',
-    ReservationStatusEnum.fulfilled: 'complete',
+    ReservationStatusEnum.fulfilled: 'fulfilled',
     ReservationStatusEnum.expired:   'expired',
     ReservationStatusEnum.cancelled: 'cancelled',
 }
@@ -52,10 +78,16 @@ def post_reservation():
     phone             = data.get('phone')
     scheduled_arrival = data.get('scheduledArrival')
     driver_class      = data.get('driverClass')
+    license_plate     = data.get('licensePlate')
+    vehicle_id        = data.get('vehicleId')
 
     if not phone or not scheduled_arrival:
         missing = 'phone' if not phone else 'scheduledArrival'
         return jsonify({'error': 'missing_required_field', 'message': f'{missing} is required'}), 400
+
+    # Require licensePlate or vehicleId
+    if not license_plate and not vehicle_id:
+        return jsonify({'error': 'missing_required_field', 'message': 'licensePlate or vehicleId is required'}), 400
 
     try:
         parsed_arrival = datetime.fromisoformat(scheduled_arrival.replace('Z', '+00:00'))
@@ -66,17 +98,39 @@ def post_reservation():
     if parsed_arrival.replace(tzinfo=None) <= now:
         return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival must be in the future'}), 400
 
+    # Resolve vehicle
+    vehicle = None
+    if vehicle_id:
+        vehicle = Vehicle.query.get(vehicle_id)
+    if not vehicle and license_plate:
+        vehicle = Vehicle.query.filter_by(license_plate=license_plate).first()
+        if not vehicle:
+            vehicle = Vehicle(
+                license_plate=license_plate,
+                vehicle_type=VehicleTypeEnum.car,
+            )
+            db.session.add(vehicle)
+            db.session.flush()
+
     effective_class = driver_class if driver_class in _DRIVER_CLASS_TO_SPOT_TYPE else 'standard'
-    spot, floor = assign_spot(effective_class)
+
+    try:
+        spot, floor = assign_spot(effective_class)
+    except Exception as exc:
+        db.session.rollback()
+        log_error('reservations.post_reservation', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to assign spot'}), 500
+
     if not spot:
         return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
 
     reservation = Reservation(
         phone=phone,
+        driver_class=effective_class,
         start_datetime=parsed_arrival.replace(tzinfo=None),
         end_datetime=None,
         customer_id=data.get('customerId'),
-        vehicle_id=data.get('vehicleId'),
+        vehicle_id=vehicle.vehicle_id if vehicle else None,
         floor_number=floor.floor_number,
         quoted_fee=data.get('quotedFee'),
         status=ReservationStatusEnum.confirmed,
@@ -120,10 +174,13 @@ def list_reservations():
 
 # ── GET /v1/reservations/<id> ─────────────────────────────────────
 
-@reservations_bp.route('/<int:reservation_id>', methods=['GET'])
+@reservations_bp.route('/<reservation_id>', methods=['GET'])
 def get_reservation(reservation_id):
     try:
-        r = Reservation.query.get(reservation_id)
+        rid = _parse_reservation_id(reservation_id)
+        if rid is None:
+            return jsonify({'error': 'invalid_reservation_id'}), 400
+        r = Reservation.query.get(rid)
         if not r:
             return jsonify({'error': 'reservation_not_found'}), 404
         return jsonify(_reservation_json(r)), 200
@@ -133,10 +190,13 @@ def get_reservation(reservation_id):
 
 # ── PUT /v1/reservations/<id> ─────────────────────────────────────
 
-@reservations_bp.route('/<int:reservation_id>', methods=['PUT'])
+@reservations_bp.route('/<reservation_id>', methods=['PUT'])
 def update_reservation(reservation_id):
     try:
-        r = Reservation.query.get(reservation_id)
+        rid = _parse_reservation_id(reservation_id)
+        if rid is None:
+            return jsonify({'error': 'invalid_reservation_id'}), 400
+        r = Reservation.query.get(rid)
         if not r:
             return jsonify({'error': 'reservation_not_found'}), 404
 
@@ -158,9 +218,14 @@ def update_reservation(reservation_id):
                 return jsonify({'error': 'invalid_end_datetime'}), 400
         if 'status' in data:
             try:
-                r.status = ReservationStatusEnum(data['status'])
+                new_status = ReservationStatusEnum(data['status'])
             except ValueError:
                 return jsonify({'error': 'invalid_status'}), 400
+            # Validate state transition
+            allowed = ALLOWED_TRANSITIONS.get(r.status, [])
+            if new_status not in allowed:
+                return jsonify({'error': 'invalid_status_transition'}), 400
+            r.status = new_status
         if 'quotedFee' in data:
             r.quoted_fee = data['quotedFee']
         if 'floorNumber' in data:
@@ -180,10 +245,13 @@ def update_reservation(reservation_id):
 
 # ── DELETE /v1/reservations/<id> (cancel) ─────────────────────────
 
-@reservations_bp.route('/<int:reservation_id>', methods=['DELETE'])
+@reservations_bp.route('/<reservation_id>', methods=['DELETE'])
 def cancel_reservation(reservation_id):
     try:
-        r = Reservation.query.get(reservation_id)
+        rid = _parse_reservation_id(reservation_id)
+        if rid is None:
+            return jsonify({'error': 'invalid_reservation_id'}), 400
+        r = Reservation.query.get(rid)
         if not r:
             return jsonify({'error': 'reservation_not_found'}), 404
 
@@ -206,10 +274,16 @@ def cancel_reservation(reservation_id):
 
         r.status = ReservationStatusEnum.cancelled
 
-        # Purge personal data
+        # Purge personal data only if customer has no other active reservations
         if customer:
-            customer.phone_number = None
-            customer.name = None
+            other_active = Reservation.query.filter(
+                Reservation.customer_id == customer.customer_id,
+                Reservation.reservation_id != r.reservation_id,
+                Reservation.status == ReservationStatusEnum.confirmed,
+            ).first()
+            if not other_active:
+                customer.phone_number = None
+                customer.name = None
 
         db.session.commit()
         return jsonify(_reservation_json(r)), 200
@@ -221,10 +295,13 @@ def cancel_reservation(reservation_id):
 
 # ── PUT /v1/reservations/<id>/check (check-in) ───────────────────
 
-@reservations_bp.route('/<int:reservation_id>/check', methods=['PUT'])
+@reservations_bp.route('/<reservation_id>/check', methods=['PUT'])
 def check_in_reservation(reservation_id):
     try:
-        r = Reservation.query.get(reservation_id)
+        rid = _parse_reservation_id(reservation_id)
+        if rid is None:
+            return jsonify({'error': 'invalid_reservation_id'}), 400
+        r = Reservation.query.get(rid)
         if not r:
             return jsonify({'error': 'reservation_not_found'}), 404
 
@@ -243,8 +320,9 @@ def check_in_reservation(reservation_id):
         if not vehicle or vehicle.license_plate != license_plate:
             return jsonify({'error': 'plate_mismatch'}), 409
 
-        # Assign a spot
-        spot, floor = assign_spot('standard')
+        # Assign a spot using reservation's driver class
+        effective_class = r.driver_class or 'standard'
+        spot, floor = assign_spot(effective_class)
         if not spot:
             return jsonify({'error': 'garage_full'}), 503
 

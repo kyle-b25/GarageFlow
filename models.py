@@ -33,6 +33,7 @@ class SpotTypeEnum(enum.Enum):
     standard      = "standard"
     accessibility = "accessibility"
     staff         = "staff"
+    eco           = "eco"
 
 class SpotStatusEnum(enum.Enum):
     available    = "available"
@@ -158,7 +159,7 @@ class ParkingSpot(db.Model):
 
     # Relationships
     floor         = db.relationship("Floor",        back_populates="parking_spots")
-    tickets       = db.relationship("Ticket",       back_populates="spot")
+    tickets       = db.relationship("Ticket",       back_populates="spot", cascade="all, delete-orphan")
     occupancy_log = db.relationship("OccupancyLog", back_populates="spot", cascade="all, delete-orphan")
 
     def __repr__(self):
@@ -199,9 +200,9 @@ class Customer(db.Model):
     __tablename__ = "customer"
 
     customer_id    = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name           = db.Column(db.String(100), nullable=False)
+    name           = db.Column(db.String(100), nullable=True)
     email          = db.Column(db.String(120), unique=True, nullable=False)
-    phone_number   = db.Column(db.String(20),  nullable=False)
+    phone_number   = db.Column(db.String(20),  nullable=True)
     date_created   = db.Column(db.DateTime,    nullable=False, server_default=db.func.now())
     account_status = db.Column(db.Enum(AccountStatusEnum), nullable=False, default=AccountStatusEnum.active)
 
@@ -249,6 +250,10 @@ class Staff(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     is_active     = db.Column(db.Boolean, nullable=False, default=True)
 
+    # Relationships
+    session_tokens = db.relationship('SessionToken', back_populates='staff', cascade='all, delete-orphan')
+    system_events  = db.relationship('SystemEvent',  back_populates='staff')
+
     def __repr__(self):
         return f"<Staff {self.operator_id}: {self.username} [{self.role.value}]>"
 
@@ -263,11 +268,11 @@ class SessionToken(db.Model):
     id         = db.Column(db.Integer, primary_key=True, autoincrement=True)
     staff_id   = db.Column(db.Integer, db.ForeignKey('staff.operator_id'), nullable=False)
     token      = db.Column(db.String(64), unique=True, nullable=False, index=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
     expires_at = db.Column(db.DateTime, nullable=False)
     is_active  = db.Column(db.Boolean, nullable=False, default=True)
 
-    staff = db.relationship('Staff', backref='session_tokens')
+    staff = db.relationship('Staff', back_populates='session_tokens')
 
     def __repr__(self):
         return f"<SessionToken {self.id} staff={self.staff_id} active={self.is_active}>"
@@ -343,6 +348,7 @@ class Reservation(db.Model):
     customer_id    = db.Column(db.Integer, db.ForeignKey("customer.customer_id"), nullable=True)
     vehicle_id     = db.Column(db.Integer, db.ForeignKey("vehicle.vehicle_id"),   nullable=True)
     phone          = db.Column(db.String(20),  nullable=True)
+    driver_class   = db.Column(db.String(20),  nullable=True)
     floor_number   = db.Column(db.Integer,     nullable=True)
     start_datetime = db.Column(db.DateTime,  nullable=False)
     end_datetime   = db.Column(db.DateTime,  nullable=True)
@@ -397,7 +403,7 @@ class SystemEvent(db.Model):
     description = db.Column(db.Text, nullable=False)
     created_at  = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
 
-    staff = db.relationship('Staff', backref='system_events')
+    staff = db.relationship('Staff', back_populates='system_events')
 
     def __repr__(self):
         return f"<SystemEvent {self.event_id} from {self.source}>"

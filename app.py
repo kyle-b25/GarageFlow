@@ -84,5 +84,17 @@ def seed_admin():
     print('Admin account created (username: admin, password: admin).')
 
 
+# ------------------------------------------------------------------
+#  Background scheduler — reservation expiration
+# ------------------------------------------------------------------
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from tasks import expire_stale_reservations
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(expire_stale_reservations, 'interval', minutes=10)
+scheduler.start()
+
+
 if __name__ == '__main__':
     app.run()
