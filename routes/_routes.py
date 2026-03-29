@@ -17,10 +17,7 @@ from datetime import datetime
 import stripe
 from flask import Blueprint, request, jsonify
 
-from utils import (
-    log_error, calculate_duration, calculate_fee,
-    assign_spot, _DRIVER_CLASS_TO_SPOT_TYPE,
-)
+from utils import log_error, calculate_duration, calculate_fee
 
 v1_bp = Blueprint('v1', __name__, url_prefix='/v1')
 
@@ -31,20 +28,6 @@ v1_bp = Blueprint('v1', __name__, url_prefix='/v1')
 
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET')
 
-_STATUS_MAP = {}  # populated on first use (deferred import)
-
-
-def _get_status_map():
-    global _STATUS_MAP
-    if not _STATUS_MAP:
-        from models import ReservationStatusEnum
-        _STATUS_MAP = {
-            ReservationStatusEnum.confirmed: 'confirmed',
-            ReservationStatusEnum.fulfilled: 'complete',
-            ReservationStatusEnum.expired:   'expired',
-            ReservationStatusEnum.cancelled: 'cancelled',
-        }
-    return _STATUS_MAP
 
 
 # ------------------------------------------------------------------
@@ -74,153 +57,6 @@ def _count_spots(spots):
     return total, occupied, available, by_type
 
 
-# ------------------------------------------------------------------
-#  POST /v1/reservations
-# ------------------------------------------------------------------
-
-@v1_bp.route('/reservations', methods=['POST'])
-def post_reservation():
-    from app import db
-    from models import Reservation, ReservationStatusEnum
-
-    data = request.get_json(silent=True) or {}
-
-    phone             = data.get('phone')
-    scheduled_arrival = data.get('scheduledArrival')
-    driver_class      = data.get('driverClass')
-
-    # Validate input
-    if not phone or not scheduled_arrival:
-        missing = 'phone' if not phone else 'scheduledArrival'
-        return jsonify({'error': 'missing_required_field', 'message': f'{missing} is required'}), 400
-
-    try:
-        parsed_arrival = datetime.fromisoformat(scheduled_arrival.replace('Z', '+00:00'))
-    except (ValueError, AttributeError):
-        return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival is not a valid ISO 8601 datetime'}), 400
-
-    now = datetime.utcnow()
-    if parsed_arrival.replace(tzinfo=None) <= now:
-        return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival must be in the future'}), 400
-
-    # Find advisory floor
-    effective_class = driver_class if driver_class in _DRIVER_CLASS_TO_SPOT_TYPE else 'standard'
-    spot, floor = assign_spot(effective_class)
-    if not spot:
-        return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
-
-    # Create Reservation (do NOT mark spot occupied)
-    reservation = Reservation(
-        phone=phone,
-        start_datetime=parsed_arrival.replace(tzinfo=None),
-        customer_id=None,
-        vehicle_id=None,
-        floor_number=floor.floor_number,
-        status=ReservationStatusEnum.confirmed,
-    )
-    try:
-        db.session.add(reservation)
-        db.session.commit()
-    except Exception as exc:
-        db.session.rollback()
-        log_error('routes.post_reservation', str(exc))
-        return jsonify({'error': 'server_error', 'message': 'Failed to create reservation'}), 500
-
-    return jsonify({
-        'reservationId':    f'R-{reservation.reservation_id:04d}',
-        'assignedFloor':    floor.floor_number,
-        'scheduledArrival': scheduled_arrival,
-        'status':           'confirmed',
-    }), 201
-
-
-# ------------------------------------------------------------------
-#  GET /v1/reservations
-# ------------------------------------------------------------------
-
-@v1_bp.route('/reservations', methods=['GET'])
-def get_reservations():
-    from app import db
-    from models import Reservation, ReservationStatusEnum
-
-    phone = request.args.get('phone')
-    if not phone:
-        return jsonify({'error': 'missing_required_field', 'message': 'phone is required'}), 400
-
-    try:
-        include_old = request.args.get('includeOld', 'false').lower() == 'true'
-
-        q = Reservation.query.filter_by(phone=phone)
-        if not include_old:
-            q = q.filter_by(status=ReservationStatusEnum.confirmed)
-        reservations = q.order_by(Reservation.start_datetime).all()
-
-        status_map = _get_status_map()
-        result = [
-            {
-                'reservationId':    f'R-{r.reservation_id:04d}',
-                'assignedFloor':    r.floor_number if r.floor_number is not None else -1,
-                'scheduledArrival': r.start_datetime.isoformat() + 'Z',
-                'status':           status_map[r.status],
-            }
-            for r in reservations
-        ]
-        return jsonify(result), 200
-    except Exception as exc:
-        db.session.rollback()
-        log_error('routes.get_reservations', str(exc))
-        return jsonify({'error': 'server_error', 'message': 'Failed to fetch reservations'}), 500
-
-
-# ------------------------------------------------------------------
-#  GET /v1/reservations/upcoming?limit=10
-# ------------------------------------------------------------------
-
-@v1_bp.route('/reservations/upcoming', methods=['GET'])
-def get_upcoming_reservations():
-    from app import db
-    from models import Reservation, ReservationStatusEnum
-
-    try:
-        limit = request.args.get('limit', 10)
-        try:
-            limit = int(limit)
-            if limit < 1 or limit > 100:
-                return jsonify({'error': 'invalid_limit', 'message': 'limit must be between 1 and 100'}), 400
-        except ValueError:
-            return jsonify({'error': 'invalid_limit', 'message': 'limit must be a whole number'}), 400
-
-        now = datetime.utcnow()
-
-
-        reservations = (
-            Reservation.query
-            .filter(
-                Reservation.status == ReservationStatusEnum.confirmed,
-                Reservation.start_datetime >= now,
-            )
-            .order_by(Reservation.start_datetime.asc())
-            .limit(limit)
-            .all()
-        )
-
-        status_map = _get_status_map()
-        result = [
-            {
-                'reservationId':    f'R-{r.reservation_id:04d}',
-                'phone':            r.phone,
-                'assignedFloor':    r.floor_number if r.floor_number is not None else -1,
-                'scheduledArrival': r.start_datetime.isoformat() + 'Z',
-                'status':           status_map[r.status],
-            }
-            for r in reservations
-        ]
-        return jsonify(result), 200
-
-    except Exception as exc:
-        db.session.rollback()
-        _log_error('routes.get_upcoming_reservations', str(exc))
-        return jsonify({'error': 'server_error', 'message': 'Failed to fetch upcoming reservations'}), 500
 
 # ------------------------------------------------------------------
 #  GET /v1/floors

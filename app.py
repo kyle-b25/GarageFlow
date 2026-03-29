@@ -45,6 +45,7 @@ from routes.analytics import analytics_bp
 from staff_routes import staff_bp
 from routes.payments import payments_bp
 from spaces_bp import spaces_bp
+from reservations_bp import reservations_bp
 
 app.register_blueprint(v1_bp)
 app.register_blueprint(tickets_bp)
@@ -53,6 +54,7 @@ app.register_blueprint(analytics_bp)
 app.register_blueprint(staff_bp)
 app.register_blueprint(payments_bp)
 app.register_blueprint(spaces_bp)
+app.register_blueprint(reservations_bp)
 
 
 # ------------------------------------------------------------------
