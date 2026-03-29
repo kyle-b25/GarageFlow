@@ -44,6 +44,7 @@ from routes.auth import token_auth_bp
 from routes.analytics import analytics_bp
 from staff_routes import staff_bp
 from routes.payments import payments_bp
+from spaces_bp import spaces_bp
 
 app.register_blueprint(v1_bp)
 app.register_blueprint(tickets_bp)
@@ -51,6 +52,7 @@ app.register_blueprint(token_auth_bp)
 app.register_blueprint(analytics_bp)
 app.register_blueprint(staff_bp)
 app.register_blueprint(payments_bp)
+app.register_blueprint(spaces_bp)
 
 
 # ------------------------------------------------------------------
