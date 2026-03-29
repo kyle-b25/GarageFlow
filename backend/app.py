@@ -11,7 +11,9 @@ import os
 
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__,
+            template_folder='../frontend',
+            static_folder='../frontend')
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY') or os.urandom(32)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///database.db')
 app.config['SESSION_PERMANENT'] = True

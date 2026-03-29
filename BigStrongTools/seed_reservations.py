@@ -21,7 +21,7 @@ import random
 from datetime import datetime, timedelta
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PROJECT_DIR)
+sys.path.insert(0, os.path.join(PROJECT_DIR, 'backend'))
 
 try:
     from app import app, db

@@ -2,4 +2,6 @@ venv/
 .env
 __pycache__/
 instance/
+backend/instance/
 CLAUDE.md
+.claude/
