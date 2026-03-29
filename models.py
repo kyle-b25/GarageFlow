@@ -247,6 +247,7 @@ class Staff(db.Model):
     role          = db.Column(db.Enum(StaffRoleEnum), nullable=False, default=StaffRoleEnum.attendant)
     username      = db.Column(db.String(50),  unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
+    is_active     = db.Column(db.Boolean, nullable=False, default=True)
 
     def __repr__(self):
         return f"<Staff {self.operator_id}: {self.username} [{self.role.value}]>"
@@ -391,8 +392,12 @@ class SystemEvent(db.Model):
     __tablename__ = "system_event"
 
     event_id    = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    staff_id    = db.Column(db.Integer, db.ForeignKey('staff.operator_id'), nullable=True)
     source      = db.Column(db.String(100), nullable=False)    # e.g. "ticket_module", "gate_controller"
     description = db.Column(db.Text, nullable=False)
+    created_at  = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
+
+    staff = db.relationship('Staff', backref='system_events')
 
     def __repr__(self):
         return f"<SystemEvent {self.event_id} from {self.source}>"
