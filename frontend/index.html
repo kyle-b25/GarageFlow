@@ -358,6 +358,12 @@
         </div>
       </div>
 
+      <!-- licensePlate: required by backend for vehicle resolution -->
+      <div class="field">
+        <label for="res-plate">License Plate <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="res-plate" placeholder="e.g. ABC-1234">
+      </div>
+
       <!-- driverClass: optional enum per spec -->
       <div class="field">
         <label for="res-driver-class">Driver Class</label>
@@ -430,7 +436,7 @@
 </div>
 
 <!-- Load app logic as a module. Looking for "app.js" likely to further delegate to "api.js" -->
-<script type="module" src="/static/js/app.js"></script>
+<script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
 
 </body>
 </html>

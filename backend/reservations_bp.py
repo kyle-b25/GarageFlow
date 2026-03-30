@@ -151,8 +151,9 @@ def post_reservation():
 @reservations_bp.route('', methods=['GET'])
 def list_reservations():
     try:
-        plate_param = request.args.get('plate')
-        phone_param = request.args.get('phone')
+        plate_param      = request.args.get('plate')
+        phone_param      = request.args.get('phone')
+        include_old      = request.args.get('includeOld', 'false').lower() == 'true'
 
         q = Reservation.query
 
@@ -163,6 +164,9 @@ def list_reservations():
             q = q.filter(Reservation.vehicle_id == vehicle.vehicle_id)
         elif phone_param:
             q = q.filter(Reservation.phone == phone_param)
+
+        if not include_old:
+            q = q.filter(Reservation.status == ReservationStatusEnum.confirmed)
 
         reservations = q.order_by(Reservation.start_datetime).all()
         return jsonify([_reservation_json(r) for r in reservations]), 200
