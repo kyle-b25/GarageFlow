@@ -1,8 +1,9 @@
 name: Sync main → development
 
+# Disabled — was causing spurious check failures on development pushes.
+# To re-enable, change workflow_dispatch back to push trigger.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   sync:
