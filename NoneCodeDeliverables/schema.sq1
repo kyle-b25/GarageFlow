@@ -1,0 +1,231 @@
+-- GarageFlow Task 6: SQL Schema
+-- MySQL / MariaDB style
+
+SET FOREIGN_KEY_CHECKS = 0;
+
+DROP TABLE IF EXISTS pricing_rule;
+DROP TABLE IF EXISTS system_event;
+DROP TABLE IF EXISTS occupancy_log;
+DROP TABLE IF EXISTS payment;
+DROP TABLE IF EXISTS reservation;
+DROP TABLE IF EXISTS ticket;
+DROP TABLE IF EXISTS staff;
+DROP TABLE IF EXISTS vehicle;
+DROP TABLE IF EXISTS customer;
+DROP TABLE IF EXISTS gate_event;
+DROP TABLE IF EXISTS parking_spot;
+DROP TABLE IF EXISTS floor;
+DROP TABLE IF EXISTS garage;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- =========================
+-- Structure of a Garage
+-- =========================
+CREATE TABLE garage (
+    garage_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    total_capacity INT NOT NULL,
+    number_of_floors INT NOT NULL,
+    operating_hours VARCHAR(100) NOT NULL,
+    front_desk_phone VARCHAR(25) NULL,
+    CONSTRAINT chk_garage_total_capacity CHECK (total_capacity > 0),
+    CONSTRAINT chk_garage_number_of_floors CHECK (number_of_floors > 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE floor (
+    floor_id INT AUTO_INCREMENT PRIMARY KEY,
+    garage_id INT NOT NULL,
+    floor_number INT NOT NULL,
+    floor_name VARCHAR(50) NULL,
+    total_spots INT NOT NULL,
+    available_spots INT NOT NULL,
+    CONSTRAINT fk_floor_garage
+        FOREIGN KEY (garage_id) REFERENCES garage(garage_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT uq_floor_per_garage UNIQUE (garage_id, floor_number),
+    CONSTRAINT chk_floor_number CHECK (floor_number >= 0),
+    CONSTRAINT chk_floor_total_spots CHECK (total_spots > 0),
+    CONSTRAINT chk_floor_available_spots CHECK (available_spots >= 0 AND available_spots <= total_spots)
+) ENGINE=InnoDB;
+
+CREATE TABLE parking_spot (
+    spot_id INT AUTO_INCREMENT PRIMARY KEY,
+    floor_id INT NOT NULL,
+    spot_type ENUM('standard', 'handicap', 'staff') NOT NULL,
+    status ENUM('available', 'occupied', 'out_of_order') NOT NULL DEFAULT 'available',
+    location_reference VARCHAR(50) NULL,
+    CONSTRAINT fk_parking_spot_floor
+        FOREIGN KEY (floor_id) REFERENCES floor(floor_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT uq_spot_location UNIQUE (floor_id, location_reference)
+) ENGINE=InnoDB;
+
+CREATE TABLE gate_event (
+    gate_id INT AUTO_INCREMENT PRIMARY KEY,
+    garage_id INT NOT NULL,
+    gate_type ENUM('entry', 'exit') NOT NULL,
+    status ENUM('open', 'closed', 'out_of_order') NOT NULL DEFAULT 'closed',
+    CONSTRAINT fk_gate_event_garage
+        FOREIGN KEY (garage_id) REFERENCES garage(garage_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT uq_gate_type_per_garage UNIQUE (garage_id, gate_type)
+) ENGINE=InnoDB;
+
+-- =========================
+-- Users
+-- =========================
+CREATE TABLE customer (
+    customer_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    phone_number VARCHAR(25) NOT NULL,
+    date_created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    account_status ENUM('active', 'suspended', 'deleted') NOT NULL DEFAULT 'active',
+    CONSTRAINT uq_customer_email UNIQUE (email),
+    CONSTRAINT uq_customer_phone UNIQUE (phone_number)
+) ENGINE=InnoDB;
+
+CREATE TABLE vehicle (
+    vehicle_id INT AUTO_INCREMENT PRIMARY KEY,
+    license_plate VARCHAR(20) NOT NULL,
+    plate_state VARCHAR(20) NOT NULL,
+    vehicle_type ENUM('car', 'motorcycle', 'truck') NOT NULL,
+    customer_id INT NULL,
+    CONSTRAINT uq_vehicle_license_plate UNIQUE (license_plate),
+    CONSTRAINT fk_vehicle_customer
+        FOREIGN KEY (customer_id) REFERENCES customer(customer_id)
+        ON UPDATE CASCADE
+        ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE staff (
+    operator_id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    role ENUM('admin', 'attendant') NOT NULL,
+    username VARCHAR(50) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    CONSTRAINT uq_staff_username UNIQUE (username)
+) ENGINE=InnoDB;
+
+-- =========================
+-- Parking Process
+-- =========================
+CREATE TABLE ticket (
+    ticket_id INT AUTO_INCREMENT PRIMARY KEY,
+    entry_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    exit_timestamp TIMESTAMP NULL,
+    entry_gate_id INT NOT NULL,
+    exit_gate_id INT NULL,
+    spot_id INT NOT NULL,
+    vehicle_id INT NOT NULL,
+    status ENUM('active', 'closed', 'lost', 'voided') NOT NULL DEFAULT 'active',
+    duration INT NULL,
+    total_fee DECIMAL(10,2) NULL,
+    CONSTRAINT fk_ticket_entry_gate
+        FOREIGN KEY (entry_gate_id) REFERENCES gate_event(gate_id)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_ticket_exit_gate
+        FOREIGN KEY (exit_gate_id) REFERENCES gate_event(gate_id)
+        ON UPDATE CASCADE
+        ON DELETE SET NULL,
+    CONSTRAINT fk_ticket_spot
+        FOREIGN KEY (spot_id) REFERENCES parking_spot(spot_id)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_ticket_vehicle
+        FOREIGN KEY (vehicle_id) REFERENCES vehicle(vehicle_id)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT chk_ticket_exit_after_entry
+        CHECK (exit_timestamp IS NULL OR exit_timestamp >= entry_timestamp),
+    CONSTRAINT chk_ticket_duration
+        CHECK (duration IS NULL OR duration >= 0),
+    CONSTRAINT chk_ticket_total_fee
+        CHECK (total_fee IS NULL OR total_fee >= 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE payment (
+    payment_id INT AUTO_INCREMENT PRIMARY KEY,
+    ticket_id INT NOT NULL,
+    amount_charged DECIMAL(10,2) NOT NULL,
+    payment_method ENUM('cash', 'card', 'mobile') NOT NULL,
+    payment_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    payment_status ENUM('paid', 'pending', 'failed', 'refunded') NOT NULL DEFAULT 'pending',
+    CONSTRAINT fk_payment_ticket
+        FOREIGN KEY (ticket_id) REFERENCES ticket(ticket_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT chk_payment_amount CHECK (amount_charged >= 0)
+) ENGINE=InnoDB;
+
+CREATE TABLE reservation (
+    reservation_id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT NOT NULL,
+    vehicle_id INT NOT NULL,
+    start_datetime TIMESTAMP NOT NULL,
+    end_datetime TIMESTAMP NOT NULL,
+    status ENUM('confirmed', 'cancelled', 'fulfilled', 'expired') NOT NULL DEFAULT 'confirmed',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    quoted_fee DECIMAL(10,2) NOT NULL,
+    CONSTRAINT fk_reservation_customer
+        FOREIGN KEY (customer_id) REFERENCES customer(customer_id)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT fk_reservation_vehicle
+        FOREIGN KEY (vehicle_id) REFERENCES vehicle(vehicle_id)
+        ON UPDATE CASCADE
+        ON DELETE RESTRICT,
+    CONSTRAINT chk_reservation_time CHECK (end_datetime > start_datetime),
+    CONSTRAINT chk_reservation_fee CHECK (quoted_fee >= 0)
+) ENGINE=InnoDB;
+
+-- =========================
+-- System Analytics
+-- =========================
+CREATE TABLE occupancy_log (
+    log_id INT AUTO_INCREMENT PRIMARY KEY,
+    spot_id INT NOT NULL,
+    changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    change_type ENUM('occupied', 'freed') NOT NULL,
+    CONSTRAINT fk_occupancy_log_spot
+        FOREIGN KEY (spot_id) REFERENCES parking_spot(spot_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE system_event (
+    event_id INT AUTO_INCREMENT PRIMARY KEY,
+    source VARCHAR(100) NOT NULL,
+    description TEXT NOT NULL
+) ENGINE=InnoDB;
+
+-- =========================
+-- Operations
+-- =========================
+CREATE TABLE pricing_rule (
+    rate_id INT AUTO_INCREMENT PRIMARY KEY,
+    rate_name VARCHAR(100) NOT NULL,
+    applicable_hours VARCHAR(100) NOT NULL,
+    pricing_model ENUM('flat', 'hourly', 'special') NOT NULL,
+    description TEXT NOT NULL,
+    program VARCHAR(255) NOT NULL
+) ENGINE=InnoDB;
+
+-- =========================
+-- Helpful Indexes
+-- =========================
+CREATE INDEX idx_floor_garage_id ON floor (garage_id);
+CREATE INDEX idx_parking_spot_floor_id ON parking_spot (floor_id);
+CREATE INDEX idx_vehicle_customer_id ON vehicle (customer_id);
+CREATE INDEX idx_ticket_vehicle_id ON ticket (vehicle_id);
+CREATE INDEX idx_ticket_spot_id ON ticket (spot_id);
+CREATE INDEX idx_ticket_entry_gate_id ON ticket (entry_gate_id);
+CREATE INDEX idx_ticket_exit_gate_id ON ticket (exit_gate_id);
+CREATE INDEX idx_reservation_customer_id ON reservation (customer_id);
+CREATE INDEX idx_reservation_vehicle_id ON reservation (vehicle_id);
+CREATE INDEX idx_occupancy_log_spot_id ON occupancy_log (spot_id);
