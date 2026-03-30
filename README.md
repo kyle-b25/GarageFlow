@@ -29,7 +29,7 @@ Sensor integration and payment processing are considered out of scope for and wi
 2. Install the libraries from requirements.txt
    - pip install -r requirements.txt
 3. Create your own env file.
-   - FLASK_APP=app.py
+   - FLASK_APP=backend/app.py
    - FLASK_ENV=development
    - FLASK_DEBUG=1
    - SECRET_KEY=yoursecretkey
