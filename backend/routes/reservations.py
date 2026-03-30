@@ -115,7 +115,7 @@ def post_reservation():
     effective_class = driver_class if driver_class in _DRIVER_CLASS_TO_SPOT_TYPE else 'standard'
 
     try:
-        spot, floor = assign_spot(effective_class)
+        spot, floor = assign_spot(effective_class, arrival_datetime=parsed_arrival.replace(tzinfo=None))
     except Exception as exc:
         db.session.rollback()
         log_error('reservations.post_reservation', str(exc))

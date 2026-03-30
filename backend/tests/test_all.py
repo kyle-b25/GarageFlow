@@ -422,7 +422,7 @@ class TestOccupancyService:
 
     def test_occupancy_garage_full_error(self, app_ctx):
         _, ctx = app_ctx
-        from services.occupancy import validate_and_assign_spot, GarageFullError
+        from utils import validate_and_assign_spot, GarageFullError
 
         with app.app_context():
             # Mark every spot as occupied
@@ -438,7 +438,7 @@ class TestOccupancyService:
 
     def test_occupancy_no_spot_available_error(self, app_ctx):
         _, ctx = app_ctx
-        from services.occupancy import validate_and_assign_spot, NoSpotAvailableError
+        from utils import validate_and_assign_spot, NoSpotAvailableError
 
         with app.app_context():
             # Occupy only accessibility spots (leave standard available)
@@ -455,7 +455,7 @@ class TestOccupancyService:
 
     def test_occupancy_reservation_conflict_error(self, app_ctx):
         _, ctx = app_ctx
-        from services.occupancy import validate_and_assign_spot, ReservationConflictError
+        from utils import validate_and_assign_spot, ReservationConflictError
 
         with app.app_context():
             arrival = datetime.utcnow() + timedelta(hours=2)
@@ -500,7 +500,7 @@ class TestOccupancyService:
 
     def test_occupancy_happy_path_returns_spot(self, app_ctx):
         _, ctx = app_ctx
-        from services.occupancy import validate_and_assign_spot
+        from utils import validate_and_assign_spot
 
         with app.app_context():
             result = validate_and_assign_spot(ctx['garage_id'], SpotTypeEnum.standard)
@@ -509,7 +509,7 @@ class TestOccupancyService:
 
     def test_occupancy_spot_not_mutated(self, app_ctx):
         _, ctx = app_ctx
-        from services.occupancy import validate_and_assign_spot
+        from utils import validate_and_assign_spot
 
         with app.app_context():
             spot = validate_and_assign_spot(ctx['garage_id'], SpotTypeEnum.standard)
