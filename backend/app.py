@@ -41,14 +41,10 @@ def health():
 #  Blueprints — imported after models to avoid circular imports
 # ------------------------------------------------------------------
 
-from routes import v1_bp, tickets_bp
-from routes.auth import token_auth_bp
-from routes.analytics import analytics_bp
-from staff_routes import staff_bp
-from routes.payments import payments_bp
-from spaces_bp import spaces_bp
-from reservations_bp import reservations_bp
-from admin_bp import admin_bp
+from routes import (
+    v1_bp, tickets_bp, token_auth_bp, analytics_bp,
+    payments_bp, reservations_bp, spaces_bp, staff_bp, admin_bp,
+)
 
 app.register_blueprint(v1_bp)
 app.register_blueprint(tickets_bp)
