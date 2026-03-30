@@ -3,7 +3,7 @@
 //  All communication with the backend lives here.
 // =============================================================
 
-const BASE_URL = 'http://127.0.0.1:5000'; // local Flask dev server
+const BASE_URL = ''; // relative — works when served by Flask
 
 // -------------------------------------------------------------
 //  Internal helper — centralised fetch wrapper.
@@ -89,9 +89,10 @@ export async function postTicket(licensePlate, driverClass, phone = null) {
  *
  * Error keys: missing_required_field | invalid_scheduled_arrival | garage_full | server_error
  */
-export async function postReservation(phone, scheduledArrival, driverClass = null) {
+export async function postReservation(phone, scheduledArrival, driverClass = null, licensePlate = null) {
   const body = { phone, scheduledArrival };
   if (driverClass) body.driverClass = driverClass;
+  if (licensePlate) body.licensePlate = licensePlate;
   return _request('POST', '/v1/reservations', body);
 }
 
@@ -120,14 +121,11 @@ export async function getReservationsByPhone(phone, includeOld = false) {
 }
 
 // =============================================================
-//  RESERVATIONS  - GET /v1/erservations/upcoming
+//  RESERVATIONS  —  GET /v1/reservations (upcoming/confirmed)
 // =============================================================
 
-//Added 3/26/2026.
-//makes gives useful information to operator.
-export async function getUpcomingReservations(limit = 5) {
-  const params = new URLSearchParams({ limit });
-  return _request('GET', `/v1/reservations/upcoming?${params}`);
+export async function getUpcomingReservations() {
+  return _request('GET', '/v1/reservations');
 }
 
 

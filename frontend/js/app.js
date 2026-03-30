@@ -49,7 +49,7 @@ function floorLabel(num) {
 function badgeClass(status) {
   switch (status?.toLowerCase()) {
     case 'confirmed': return 'badge-ongoing';
-    case 'complete':  return 'badge-completed';
+    case 'fulfilled': return 'badge-completed';
     case 'expired':   return 'badge-expired';
     default:          return '';
   }
@@ -88,11 +88,12 @@ async function handleEntryFinish() {
 // =============================================================
 
 async function handleResFinish() {
-  const phone       = document.getElementById('res-phone').value.trim();
-  const arrivalDate = document.getElementById('res-arrival-date').value;
-  const arrivalTime = document.getElementById('res-arrival-time').value;
-  const driverClass = document.getElementById('res-driver-class').value || null;
-  const feedback    = document.getElementById('res-feedback');
+  const phone        = document.getElementById('res-phone').value.trim();
+  const arrivalDate  = document.getElementById('res-arrival-date').value;
+  const arrivalTime  = document.getElementById('res-arrival-time').value;
+  const licensePlate = document.getElementById('res-plate').value.trim();
+  const driverClass  = document.getElementById('res-driver-class').value || null;
+  const feedback     = document.getElementById('res-feedback');
 
   hideFeedback(feedback);
 
@@ -101,6 +102,7 @@ async function handleResFinish() {
     showFeedback(feedback, '⚠️ Scheduled arrival date and time are required.', true);
     return;
   }
+  if (!licensePlate) { showFeedback(feedback, '⚠️ License plate is required.', true); return; }
 
   const scheduledArrival = toISO(arrivalDate, arrivalTime);
 
@@ -108,7 +110,7 @@ async function handleResFinish() {
   setLoading(btn, true);
 
   try {
-    const result = await postReservation(phone, scheduledArrival, driverClass);
+    const result = await postReservation(phone, scheduledArrival, driverClass, licensePlate);
     showFeedback(
       feedback,
       `✅ Reservation confirmed! ID: ${result.reservationId} · Floor: ${result.assignedFloor}`,
@@ -116,6 +118,7 @@ async function handleResFinish() {
     );
     // Clear form
     document.getElementById('res-phone').value = '';
+    document.getElementById('res-plate').value = '';
     document.getElementById('res-driver-class').value = '';
     setDefaultArrival();
   } catch (err) {
@@ -203,21 +206,26 @@ async function showFloor() {
     const floors = await getAllFloors();
     cards.innerHTML = '';
     floors.forEach(f => {
-      const zoneRows = Object.entries(f.zones).map(([letter, val]) => `
-        <div class="zone-row">
-          <span class="zone-key">Zone ${letter}</span>
-          <span class="zone-val ${val === 'Full' ? 'full' : ''}">${val}</span>
-        </div>
-      `).join('');
+      const floorName = f.floorName || `Floor ${f.floorNumber}`;
+      const occupied = f.totalSpots - f.availableSpots;
+      const pct = f.totalSpots ? Math.round((occupied / f.totalSpots) * 100) : 0;
+      const isFull = f.availableSpots === 0;
 
       cards.innerHTML += `
         <div class="zone-card">
-          <div class="zone-card-title">${f.floor}</div>
+          <div class="zone-card-title">${floorName}</div>
           <div class="zone-row">
             <span class="zone-key">Available</span>
-            <span class="zone-val">${f.available}</span>
+            <span class="zone-val ${isFull ? 'full' : ''}">${isFull ? 'Full' : f.availableSpots}</span>
           </div>
-          ${zoneRows}
+          <div class="zone-row">
+            <span class="zone-key">Total</span>
+            <span class="zone-val">${f.totalSpots}</span>
+          </div>
+          <div class="zone-row">
+            <span class="zone-key">Occupancy</span>
+            <span class="zone-val">${pct}%</span>
+          </div>
         </div>
       `;
     });
