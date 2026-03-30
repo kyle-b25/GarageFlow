@@ -119,21 +119,53 @@ _DRIVER_CLASS_TO_SPOT_TYPE = {
     'standard':      'standard',
     'accessibility': 'accessibility',
     'employee':      'staff',
-    'eco':           'eco',
+    'eco':           'staff',
 }
 
 VALID_DRIVER_CLASSES = set(_DRIVER_CLASS_TO_SPOT_TYPE.keys())
 
+_SPOT_TYPE_TO_DRIVER_CLASSES = {}
+for _dc, _st in _DRIVER_CLASS_TO_SPOT_TYPE.items():
+    _SPOT_TYPE_TO_DRIVER_CLASSES.setdefault(_st, set()).add(_dc)
 
-def assign_spot(driver_class):
+
+# ------------------------------------------------------------------
+#  Spot assignment exceptions
+# ------------------------------------------------------------------
+
+class GarageFullError(Exception):
+    """No available spots of any type remain in the garage."""
+    http_status = 409
+    error_key = "garage_full"
+
+
+class NoSpotAvailableError(Exception):
+    """No available spot of the requested type exists on any floor."""
+    http_status = 409
+    error_key = "no_spot_available"
+
+
+class ReservationConflictError(Exception):
+    """Every candidate spot conflicts with a confirmed reservation."""
+    http_status = 409
+    error_key = "reservation_conflict"
+
+
+def assign_spot(driver_class, arrival_datetime=None):
     """
     Find the best available (spot, floor) pair for the given driver class.
 
     Floors are sorted by floor_number ascending (prefer lowest floor).
+    When arrival_datetime is provided, candidate spots are checked against
+    confirmed reservations within a ±30-minute window; floors where all
+    spots of the requested type conflict are skipped.
 
     Returns (spot, floor) on success, or (None, None) if garage is full.
     """
-    from models import Floor, ParkingSpot, SpotTypeEnum, SpotStatusEnum
+    from models import (
+        Floor, ParkingSpot, Reservation,
+        SpotTypeEnum, SpotStatusEnum, ReservationStatusEnum,
+    )
 
     spot_type_val = SpotTypeEnum(_DRIVER_CLASS_TO_SPOT_TYPE[driver_class])
 
@@ -144,16 +176,127 @@ def assign_spot(driver_class):
 
     floors.sort(key=lambda f: f.floor_number)
 
+    matching_driver_classes = _SPOT_TYPE_TO_DRIVER_CLASSES.get(
+        spot_type_val.value, set()
+    )
+
+    found_type_match = False
+
     for floor in floors:
-        spot = ParkingSpot.query.filter_by(
+        candidates = ParkingSpot.query.filter_by(
             floor_id=floor.floor_id,
             spot_type=spot_type_val,
             status=SpotStatusEnum.available,
-        ).first()
-        if spot:
-            return spot, floor
+        ).all()
+
+        if not candidates:
+            continue
+
+        found_type_match = True
+
+        # No conflict check needed — return first candidate
+        if not arrival_datetime or not matching_driver_classes:
+            return candidates[0], floor
+
+        # Reservation conflict filtering (±30 min window)
+        from datetime import timedelta
+        window_start = arrival_datetime - timedelta(minutes=30)
+        window_end = arrival_datetime + timedelta(minutes=30)
+
+        from app import db
+        conflicting_count = (
+            db.session.query(db.func.count(Reservation.reservation_id))
+            .filter(
+                Reservation.status == ReservationStatusEnum.confirmed,
+                Reservation.floor_number == floor.floor_number,
+                Reservation.driver_class.in_(matching_driver_classes),
+                Reservation.start_datetime >= window_start,
+                Reservation.start_datetime <= window_end,
+            )
+            .scalar()
+        )
+
+        if len(candidates) - conflicting_count > 0:
+            return candidates[0], floor
 
     return None, None
+
+
+def validate_and_assign_spot(garage_id, spot_type, arrival_datetime=None):
+    """
+    Select an available parking spot with conflict checking.
+
+    This is a stricter version of assign_spot() that raises exceptions
+    instead of returning (None, None). Used by tests and any code that
+    needs to distinguish between garage-full, no-type-available, and
+    reservation-conflict scenarios.
+
+    Args:
+        garage_id: Primary key of the target Garage.
+        spot_type: A SpotTypeEnum member.
+        arrival_datetime: Optional datetime for reservation conflict check.
+
+    Returns:
+        The chosen ParkingSpot ORM instance.
+
+    Raises:
+        GarageFullError, NoSpotAvailableError, ReservationConflictError
+    """
+    from app import db
+    from models import (
+        Floor, ParkingSpot, Reservation,
+        SpotStatusEnum, ReservationStatusEnum,
+    )
+
+    # Step 1: total garage capacity
+    available_count = (
+        db.session.query(db.func.count(ParkingSpot.spot_id))
+        .join(Floor, ParkingSpot.floor_id == Floor.floor_id)
+        .filter(
+            Floor.garage_id == garage_id,
+            ParkingSpot.status == SpotStatusEnum.available,
+        )
+        .scalar()
+    )
+    if available_count == 0:
+        raise GarageFullError("Garage is full — no available spots")
+
+    # Step 2: find any available spot of the requested type
+    type_available = (
+        db.session.query(db.func.count(ParkingSpot.spot_id))
+        .join(Floor, ParkingSpot.floor_id == Floor.floor_id)
+        .filter(
+            Floor.garage_id == garage_id,
+            ParkingSpot.status == SpotStatusEnum.available,
+            ParkingSpot.spot_type == spot_type,
+        )
+        .scalar()
+    )
+    if type_available == 0:
+        raise NoSpotAvailableError(
+            f"No available {spot_type.value} spot in garage {garage_id}"
+        )
+
+    # Step 3: reverse-map spot_type to driver_class for assign_spot
+    matching_classes = _SPOT_TYPE_TO_DRIVER_CLASSES.get(spot_type.value, set())
+    if not matching_classes:
+        raise NoSpotAvailableError(
+            f"No driver class maps to {spot_type.value}"
+        )
+    driver_class = next(iter(matching_classes))
+
+    spot, floor = assign_spot(driver_class, arrival_datetime=arrival_datetime)
+    if spot:
+        return spot
+
+    # assign_spot returned None — must be a conflict
+    if arrival_datetime:
+        raise ReservationConflictError(
+            f"All {spot_type.value} spots conflict with confirmed reservations"
+        )
+    raise NoSpotAvailableError(
+        f"No available {spot_type.value} spot in garage {garage_id}"
+    )
 
 
 def release_spot(spot_id, exit_ts):
