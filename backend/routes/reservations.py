@@ -112,6 +112,11 @@ def post_reservation():
             db.session.add(vehicle)
             db.session.flush()
 
+    if driver_class and driver_class not in _DRIVER_CLASS_TO_SPOT_TYPE:
+        return jsonify({
+            'error': 'invalid_driver_class',
+            'message': f'driverClass must be one of: {", ".join(sorted(_DRIVER_CLASS_TO_SPOT_TYPE.keys()))}',
+        }), 400
     effective_class = driver_class if driver_class in _DRIVER_CLASS_TO_SPOT_TYPE else 'standard'
 
     try:

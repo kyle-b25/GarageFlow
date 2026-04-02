@@ -313,6 +313,9 @@ def release_spot(spot_id, exit_ts):
     if not spot:
         return None
 
+    if spot.status == SpotStatusEnum.available:
+        return spot
+
     spot.status = SpotStatusEnum.available
 
     floor = Floor.query.get(spot.floor_id)
