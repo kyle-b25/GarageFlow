@@ -146,6 +146,10 @@ def update_floor(floor_id):
                 return jsonify({"error": "invalid_total_spots",
                                 "message": "totalSpots cannot be less than occupied spots"}), 400
             floor.total_spots = new_total
+            actual_available = ParkingSpot.query.filter_by(
+                floor_id=floor_id, status=SpotStatusEnum.available
+            ).count()
+            floor.available_spots = min(actual_available, new_total - occupied_count)
             garage = Garage.query.get(floor.garage_id)
             if garage:
                 _sync_garage(garage)

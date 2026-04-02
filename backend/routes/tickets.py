@@ -309,10 +309,24 @@ def delete_ticket_personal(ticket_id):
     # Wipe phone from ticket
     ticket.phone = None
 
-    # Wipe license plate from associated vehicle (sentinel preserves unique constraint)
+    # Only redact the vehicle plate if no other tickets reference this vehicle
     vehicle = Vehicle.query.get(ticket.vehicle_id)
     if vehicle:
-        vehicle.license_plate = f'REDACTED-{vehicle.vehicle_id}'
+        other_tickets = Ticket.query.filter(
+            Ticket.vehicle_id == vehicle.vehicle_id,
+            Ticket.ticket_id != ticket.ticket_id,
+        ).first()
+        if other_tickets:
+            # Dissociate this ticket from the shared vehicle instead of mutating it
+            redacted_vehicle = Vehicle(
+                license_plate=f'REDACTED-{ticket.ticket_id}',
+                vehicle_type=vehicle.vehicle_type,
+            )
+            db.session.add(redacted_vehicle)
+            db.session.flush()
+            ticket.vehicle_id = redacted_vehicle.vehicle_id
+        else:
+            vehicle.license_plate = f'REDACTED-{vehicle.vehicle_id}'
 
     try:
         db.session.commit()
