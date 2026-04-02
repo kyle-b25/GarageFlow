@@ -6,6 +6,12 @@ from app import app, db
 from models import Garage, Floor, ParkingSpot, SpotTypeEnum, SpotStatusEnum
 
 with app.app_context():
+    # Hard reset — wipe existing structure data before seeding
+    ParkingSpot.query.delete()
+    Floor.query.delete()
+    Garage.query.delete()
+    db.session.commit()
+    print("Reset: cleared existing Garage, Floor, and ParkingSpot data.")
     # Garage
     garage = Garage(
         name="GarageFlow Main",

@@ -31,7 +31,7 @@ EOF
 
 # 5. Initialize the database
 cd backend
-python -c "from app import app, db; app.app_context().push(); db.create_all()"
+flask init-db
 
 # 6. Seed the database (1 garage, 1 floor, 5 parking spots)
 python seed.py

@@ -61,6 +61,28 @@ app.register_blueprint(admin_bp)
 #  CLI commands
 # ------------------------------------------------------------------
 
+@app.cli.command('init-db')
+def init_db():
+    """
+    Task 7 — Create database.
+
+    Create all tables defined in models.py. Safe to re-run: existing
+    tables are left untouched; only missing tables are added.
+
+    Usage:
+        flask init-db
+    """
+    db_url = app.config['SQLALCHEMY_DATABASE_URI']
+    db.create_all()
+
+    table_names = sorted(db.engine.table_names())
+    print(f"Database: {db_url}")
+    print(f"Tables ({len(table_names)}):")
+    for name in table_names:
+        print(f"  {name}")
+    print("init-db complete.")
+
+
 @app.cli.command('seed-admin')
 def seed_admin():
     """Create a default admin account (username: admin, password: admin)."""
