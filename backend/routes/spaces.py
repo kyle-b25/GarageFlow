@@ -12,6 +12,7 @@ from models import (
     SpotTypeEnum, SpotStatusEnum, TicketStatusEnum,
     OccupancyLog, OccupancyChangeEnum,
 )
+from utils import log_error
 
 spaces_bp = Blueprint('spaces', __name__, url_prefix='/v1')
 
@@ -54,7 +55,8 @@ def list_spaces():
     try:
         spots = ParkingSpot.query.all()
         return jsonify([_space_json(s) for s in spots]), 200
-    except Exception:
+    except Exception as exc:
+        log_error('spaces.list_spaces', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -71,7 +73,8 @@ def list_available_spaces():
             q = q.filter(ParkingSpot.spot_type == spot_type)
         spots = q.all()
         return jsonify([_space_json(s) for s in spots]), 200
-    except Exception:
+    except Exception as exc:
+        log_error('spaces.list_available_spaces', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -82,7 +85,8 @@ def list_floors():
     try:
         floors = Floor.query.all()
         return jsonify([_floor_json(f) for f in floors]), 200
-    except Exception:
+    except Exception as exc:
+        log_error('spaces.list_floors', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -110,8 +114,9 @@ def create_floor():
         _sync_garage(garage)
         db.session.commit()
         return jsonify(_floor_json(floor)), 201
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        log_error('spaces.create_floor', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -122,7 +127,8 @@ def get_floor(floor_id):
         if not floor:
             return jsonify({"error": "floor_not_found"}), 404
         return jsonify(_floor_json(floor)), 200
-    except Exception:
+    except Exception as exc:
+        log_error('spaces.get_floor', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -155,8 +161,9 @@ def update_floor(floor_id):
                 _sync_garage(garage)
         db.session.commit()
         return jsonify(_floor_json(floor)), 200
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        log_error('spaces.update_floor', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -185,8 +192,9 @@ def delete_floor(floor_id):
             _sync_garage(garage)
         db.session.commit()
         return jsonify({"message": "floor deleted"}), 200
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        log_error('spaces.delete_floor', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -208,7 +216,8 @@ def list_floor_spaces(floor_id):
             q = q.filter(ParkingSpot.status == status_enum)
         spots = q.all()
         return jsonify([_space_json(s) for s in spots]), 200
-    except Exception:
+    except Exception as exc:
+        log_error('spaces.list_floor_spaces', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -242,8 +251,9 @@ def create_space(floor_id):
             _sync_garage(garage)
         db.session.commit()
         return jsonify(_space_json(spot)), 201
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        log_error('spaces.create_space', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -257,7 +267,8 @@ def get_space(floor_id, space_id):
         if not spot or spot.floor_id != floor_id:
             return jsonify({"error": "space_not_found"}), 404
         return jsonify(_space_json(spot)), 200
-    except Exception:
+    except Exception as exc:
+        log_error('spaces.get_space', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -304,8 +315,9 @@ def update_space(floor_id, space_id):
                 ))
         db.session.commit()
         return jsonify(_space_json(spot)), 200
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        log_error('spaces.update_space', str(exc))
         return jsonify({"error": "server_error"}), 500
 
 
@@ -337,6 +349,7 @@ def delete_space(floor_id, space_id):
             _sync_garage(garage)
         db.session.commit()
         return jsonify({"message": "space deleted"}), 200
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        log_error('spaces.delete_space', str(exc))
         return jsonify({"error": "server_error"}), 500

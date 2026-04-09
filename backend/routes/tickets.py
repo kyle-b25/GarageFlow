@@ -354,7 +354,6 @@ def delete_ticket(ticket_id):
 
     # Release spot if ticket is active
     if ticket.status == TicketStatusEnum.active:
-        from datetime import datetime
         release_spot(ticket.spot_id, datetime.utcnow())
 
     # Delete associated payment first (FK constraint)

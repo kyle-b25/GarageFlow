@@ -10,14 +10,12 @@ from flask import Blueprint, jsonify, request
 from app import db
 from models import (
     Reservation, ReservationStatusEnum,
-    Vehicle, Customer,
+    Vehicle, Customer, VehicleTypeEnum,
     Ticket, TicketStatusEnum,
     OccupancyLog, OccupancyChangeEnum,
     SpotStatusEnum,
 )
 from utils import assign_spot, log_error, _DRIVER_CLASS_TO_SPOT_TYPE, VALID_DRIVER_CLASSES
-
-from models import VehicleTypeEnum
 
 reservations_bp = Blueprint('reservations', __name__, url_prefix='/v1/reservations')
 
