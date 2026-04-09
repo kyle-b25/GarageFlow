@@ -70,6 +70,10 @@ def _spot_filter(query, floor_id):
 
 # ------------------------------------------------------------------
 #  GET /v1/analytics/utilization
+#  WARNING: ROUTE COLLISION — this path is also registered in
+#  staff_bp (routes/staff.py) with a simpler implementation and
+#  different query params (?from/?to vs ?start/?end). The staff_bp
+#  version wins because it is registered after analytics_bp in app.py.
 # ------------------------------------------------------------------
 
 @analytics_bp.route('/utilization', methods=['GET'])
@@ -317,6 +321,10 @@ def occupancy():
 
 # ------------------------------------------------------------------
 #  GET /v1/analytics/peak-hours
+#  WARNING: ROUTE COLLISION — this path is also registered in
+#  staff_bp (routes/staff.py) with a simpler implementation and
+#  different query params (?from/?to vs ?start/?end). The staff_bp
+#  version wins because it is registered after analytics_bp in app.py.
 # ------------------------------------------------------------------
 
 @analytics_bp.route('/peak-hours', methods=['GET'])

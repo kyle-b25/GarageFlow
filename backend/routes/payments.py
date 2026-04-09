@@ -18,7 +18,7 @@ from datetime import datetime
 from decimal import Decimal
 
 import stripe
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, g
 
 from utils import log_error, login_required, require_role
 
@@ -340,7 +340,7 @@ def override_payment(payment_id):
         db.session.add(SystemEvent(
             source=SOURCE,
             description=f'Admin override on payment {payment_id} by '
-                        f'{session.get("username", "unknown")}: {", ".join(changes)}',
+                        f'{g.current_user.username if g.current_user else "unknown"}: {", ".join(changes)}',
         ))
         db.session.commit()
     except Exception:

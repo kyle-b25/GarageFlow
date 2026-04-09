@@ -4,9 +4,7 @@ staff_routes.py — GarageFlow Staff Blueprint
 All routes registered on this blueprint require an authenticated staff session.
 Admin-only routes additionally use the @require_admin decorator.
 
-Exports:
-  staff_bp      — Flask Blueprint; register with app.register_blueprint()
-  require_admin — decorator for admin-only route functions
+  staff_bp — Flask Blueprint; register with app.register_blueprint()
 """
 
 from collections import defaultdict
@@ -14,7 +12,7 @@ from datetime import datetime, timedelta
 import bcrypt
 from flask import Blueprint, request, jsonify, g
 
-from utils import get_current_user, require_role
+from utils import get_current_user, require_role, log_error
 
 require_admin = require_role('admin')
 
@@ -85,8 +83,9 @@ def create_staff():
     try:
         db.session.add(staff)
         db.session.commit()
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
+        log_error('staff.create_staff', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to create staff member'}), 500
 
     return jsonify({
@@ -129,6 +128,10 @@ def _parse_date_range():
 
 # ------------------------------------------------------------------
 #  GET /v1/analytics/utilization  (staff only)
+#  WARNING: ROUTE COLLISION — this path is also registered in
+#  analytics_bp (routes/analytics.py) with a different implementation
+#  and different query params (?start/?end vs ?from/?to). This version
+#  wins because staff_bp is registered after analytics_bp in app.py.
 # ------------------------------------------------------------------
 
 @staff_bp.route('/v1/analytics/utilization', methods=['GET'])
@@ -205,6 +208,7 @@ def get_utilization():
 
 # ------------------------------------------------------------------
 #  GET /v1/analytics/revenue  (staff only)
+#  NOTE: No equivalent in analytics_bp — unique to staff_bp.
 # ------------------------------------------------------------------
 
 @staff_bp.route('/v1/analytics/revenue', methods=['GET'])
@@ -267,6 +271,10 @@ def get_revenue():
 
 # ------------------------------------------------------------------
 #  GET /v1/analytics/peak-hours  (staff only)
+#  WARNING: ROUTE COLLISION — this path is also registered in
+#  analytics_bp (routes/analytics.py) with a different implementation
+#  and different query params (?start/?end vs ?from/?to). This version
+#  wins because staff_bp is registered after analytics_bp in app.py.
 # ------------------------------------------------------------------
 
 @staff_bp.route('/v1/analytics/peak-hours', methods=['GET'])
