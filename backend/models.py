@@ -19,6 +19,7 @@
 from datetime import datetime
 
 from app import db
+from sqlalchemy import CheckConstraint, UniqueConstraint  # Fixed: added imports for DB-level constraints
 import enum
 
 
@@ -29,6 +30,10 @@ import enum
 #  native ENUM columns (PostgreSQL / MySQL).
 # =============================================================
 
+# NOTE: SpotTypeEnum values diverge from schema.sq1/Task5 which define
+# (standard, handicap, staff). Python keeps (standard, accessibility, staff, eco)
+# per the "Do NOT rename Enum values" rule. 'accessibility' is used throughout
+# routes and tests; 'eco' maps to staff spots via _DRIVER_CLASS_TO_SPOT_TYPE.
 class SpotTypeEnum(enum.Enum):
     standard      = "standard"
     accessibility = "accessibility"
@@ -107,12 +112,18 @@ class Garage(db.Model):
     """
     __tablename__ = "garage"
 
+    # Fixed: added CheckConstraints for total_capacity > 0, number_of_floors > 0
+    __table_args__ = (
+        CheckConstraint('total_capacity > 0', name='chk_garage_total_capacity'),
+        CheckConstraint('number_of_floors > 0', name='chk_garage_number_of_floors'),
+    )
+
     garage_id         = db.Column(db.Integer, primary_key=True, autoincrement=True)
     name              = db.Column(db.String(100), nullable=False)
     total_capacity    = db.Column(db.Integer, nullable=False)
     number_of_floors  = db.Column(db.Integer, nullable=False)
-    operating_hours   = db.Column(db.String(50))          # e.g. "6:00am–midnight"
-    front_desk_phone  = db.Column(db.String(20))
+    operating_hours   = db.Column(db.String(100), nullable=False)  # Fixed: String(50)->String(100), nullable=False per schema.sq1/Task5  # WARNING: tests/test_all.py app_ctx fixture and tests/test_db_operations.py seeded_db fixture create Garage without operating_hours
+    front_desk_phone  = db.Column(db.String(25))                   # Fixed: String(20)->String(25) per schema.sq1
 
     # Relationships
     floors      = db.relationship("Floor",     back_populates="garage", cascade="all, delete-orphan")
@@ -129,8 +140,16 @@ class Floor(db.Model):
     """
     __tablename__ = "floor"
 
+    # Fixed: added CheckConstraints and UniqueConstraint per schema.sq1/Task5
+    __table_args__ = (
+        UniqueConstraint('garage_id', 'floor_number', name='uq_floor_per_garage'),
+        CheckConstraint('floor_number >= 0', name='chk_floor_number'),
+        CheckConstraint('total_spots > 0', name='chk_floor_total_spots'),
+        CheckConstraint('available_spots >= 0 AND available_spots <= total_spots', name='chk_floor_available_spots'),
+    )
+
     floor_id        = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    garage_id       = db.Column(db.Integer, db.ForeignKey("garage.garage_id"), nullable=False)
+    garage_id       = db.Column(db.Integer, db.ForeignKey("garage.garage_id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)  # Fixed: added onupdate/ondelete per schema.sq1
     floor_number    = db.Column(db.Integer, nullable=False)
     floor_name      = db.Column(db.String(50), nullable=True)   # e.g. "Basement", "Roof", or null
     total_spots     = db.Column(db.Integer, nullable=False)
@@ -151,11 +170,16 @@ class ParkingSpot(db.Model):
     """
     __tablename__ = "parking_spot"
 
+    # Fixed: added UniqueConstraint per schema.sq1
+    __table_args__ = (
+        UniqueConstraint('floor_id', 'location_reference', name='uq_spot_location'),
+    )
+
     spot_id            = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    floor_id           = db.Column(db.Integer, db.ForeignKey("floor.floor_id"), nullable=False)
-    spot_type          = db.Column(db.Enum(SpotTypeEnum), nullable=False)
-    status             = db.Column(db.Enum(SpotStatusEnum), nullable=False, default=SpotStatusEnum.available)
-    location_reference = db.Column(db.String(20), nullable=True)   # e.g. "A-12", "Zone B"
+    floor_id           = db.Column(db.Integer, db.ForeignKey("floor.floor_id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)  # Fixed: added onupdate/ondelete per schema.sq1
+    spot_type          = db.Column(db.Enum(SpotTypeEnum, create_constraint=True, name='ck_spot_type'), nullable=False)  # Fixed: added create_constraint + name for CHECK on SQLite
+    status             = db.Column(db.Enum(SpotStatusEnum, create_constraint=True, name='ck_spot_status'), nullable=False, default=SpotStatusEnum.available)  # Fixed: added create_constraint + name
+    location_reference = db.Column(db.String(50), nullable=True)   # Fixed: String(20)->String(50) per schema.sq1
 
     # Relationships
     floor         = db.relationship("Floor",        back_populates="parking_spots")
@@ -173,10 +197,15 @@ class GateEvent(db.Model):
     """
     __tablename__ = "gate_event"
 
+    # Fixed: added UniqueConstraint per schema.sq1
+    __table_args__ = (
+        UniqueConstraint('garage_id', 'gate_type', name='uq_gate_type_per_garage'),
+    )
+
     gate_id   = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    garage_id = db.Column(db.Integer, db.ForeignKey("garage.garage_id"), nullable=False)
-    gate_type = db.Column(db.Enum(GateTypeEnum),   nullable=False)
-    status    = db.Column(db.Enum(GateStatusEnum), nullable=False, default=GateStatusEnum.closed)
+    garage_id = db.Column(db.Integer, db.ForeignKey("garage.garage_id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)  # Fixed: added onupdate/ondelete per schema.sq1
+    gate_type = db.Column(db.Enum(GateTypeEnum, create_constraint=True, name='ck_gate_type'),   nullable=False)  # Fixed: added create_constraint + name
+    status    = db.Column(db.Enum(GateStatusEnum, create_constraint=True, name='ck_gate_status'), nullable=False, default=GateStatusEnum.closed)  # Fixed: added create_constraint + name
 
     # Relationships
     garage         = db.relationship("Garage", back_populates="gate_events")
@@ -200,11 +229,11 @@ class Customer(db.Model):
     __tablename__ = "customer"
 
     customer_id    = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name           = db.Column(db.String(100), nullable=True)
+    name           = db.Column(db.String(100), nullable=False)   # Fixed: nullable=True->False per schema.sq1/Task5  # WARNING: routes/reservations.py:293 sets name=None on cancel
     email          = db.Column(db.String(120), unique=True, nullable=False)
-    phone_number   = db.Column(db.String(20),  nullable=True)
+    phone_number   = db.Column(db.String(25),  nullable=False, unique=True)  # Fixed: nullable=True->False, added unique=True, String(20)->String(25) per schema.sq1/Task5  # WARNING: routes/reservations.py:292 sets phone_number=None on cancel
     date_created   = db.Column(db.DateTime,    nullable=False, server_default=db.func.now())
-    account_status = db.Column(db.Enum(AccountStatusEnum), nullable=False, default=AccountStatusEnum.active)
+    account_status = db.Column(db.Enum(AccountStatusEnum, create_constraint=True, name='ck_account_status'), nullable=False, default=AccountStatusEnum.active)  # Fixed: added create_constraint + name
 
     # Relationships
     vehicles     = db.relationship("Vehicle",     back_populates="customer")
@@ -223,9 +252,9 @@ class Vehicle(db.Model):
 
     vehicle_id    = db.Column(db.Integer, primary_key=True, autoincrement=True)
     license_plate = db.Column(db.String(20),  nullable=False, unique=True)
-    plate_state   = db.Column(db.String(50),  nullable=True)
-    vehicle_type  = db.Column(db.Enum(VehicleTypeEnum), nullable=False)
-    customer_id   = db.Column(db.Integer, db.ForeignKey("customer.customer_id"), nullable=True)
+    plate_state   = db.Column(db.String(20),  nullable=False)  # Fixed: nullable=True->False, String(50)->String(20) per schema.sq1/Task5  # WARNING: routes/tickets.py:100-106 and routes/reservations.py:106-111 create Vehicle without plate_state
+    vehicle_type  = db.Column(db.Enum(VehicleTypeEnum, create_constraint=True, name='ck_vehicle_type'), nullable=False)  # Fixed: added create_constraint + name
+    customer_id   = db.Column(db.Integer, db.ForeignKey("customer.customer_id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # Fixed: added onupdate/ondelete per schema.sq1
 
     # Relationships
     customer     = db.relationship("Customer",    back_populates="vehicles")
@@ -245,7 +274,7 @@ class Staff(db.Model):
 
     operator_id   = db.Column(db.Integer, primary_key=True, autoincrement=True)
     name          = db.Column(db.String(100), nullable=False)
-    role          = db.Column(db.Enum(StaffRoleEnum), nullable=False, default=StaffRoleEnum.attendant)
+    role          = db.Column(db.Enum(StaffRoleEnum, create_constraint=True, name='ck_staff_role'), nullable=False, default=StaffRoleEnum.attendant)  # Fixed: added create_constraint + name
     username      = db.Column(db.String(50),  unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     is_active     = db.Column(db.Boolean, nullable=False, default=True)
@@ -290,16 +319,23 @@ class Ticket(db.Model):
     """
     __tablename__ = "ticket"
 
+    # Fixed: added CheckConstraints per schema.sq1/Task5
+    __table_args__ = (
+        CheckConstraint('exit_timestamp IS NULL OR exit_timestamp >= entry_timestamp', name='chk_ticket_exit_after_entry'),
+        CheckConstraint('duration IS NULL OR duration >= 0', name='chk_ticket_duration'),
+        CheckConstraint('total_fee IS NULL OR total_fee >= 0', name='chk_ticket_total_fee'),
+    )
+
     ticket_id       = db.Column(db.Integer, primary_key=True, autoincrement=True)
     entry_timestamp = db.Column(db.DateTime,  nullable=False, server_default=db.func.now())
     exit_timestamp  = db.Column(db.DateTime,  nullable=True)
-    entry_gate_id   = db.Column(db.Integer,   db.ForeignKey("gate_event.gate_id"), nullable=True)
-    exit_gate_id    = db.Column(db.Integer,   db.ForeignKey("gate_event.gate_id"), nullable=True)
-    spot_id         = db.Column(db.Integer,   db.ForeignKey("parking_spot.spot_id"), nullable=False)
-    vehicle_id      = db.Column(db.Integer,   db.ForeignKey("vehicle.vehicle_id"),   nullable=False)
-    status          = db.Column(db.Enum(TicketStatusEnum), nullable=False, default=TicketStatusEnum.active)
+    entry_gate_id   = db.Column(db.Integer,   db.ForeignKey("gate_event.gate_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5  # WARNING: routes/tickets.py:118-124 and routes/reservations.py:341-346 create Ticket without entry_gate_id
+    exit_gate_id    = db.Column(db.Integer,   db.ForeignKey("gate_event.gate_id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # Fixed: added onupdate/ondelete per schema.sq1
+    spot_id         = db.Column(db.Integer,   db.ForeignKey("parking_spot.spot_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: added onupdate/ondelete per schema.sq1
+    vehicle_id      = db.Column(db.Integer,   db.ForeignKey("vehicle.vehicle_id", onupdate="CASCADE", ondelete="RESTRICT"),   nullable=False)  # Fixed: added onupdate/ondelete per schema.sq1
+    status          = db.Column(db.Enum(TicketStatusEnum, create_constraint=True, name='ck_ticket_status'), nullable=False, default=TicketStatusEnum.active)  # Fixed: added create_constraint + name
     duration        = db.Column(db.Integer,   nullable=True)       # minutes, set on close
-    total_fee       = db.Column(db.Numeric(8, 2), nullable=True)   # set on close
+    total_fee       = db.Column(db.Numeric(10, 2), nullable=True)  # Fixed: Numeric(8,2)->Numeric(10,2) per schema.sq1
     phone           = db.Column(db.String(20), nullable=True)
 
     # Relationships
@@ -320,12 +356,17 @@ class Payment(db.Model):
     """
     __tablename__ = "payment"
 
+    # Fixed: added CheckConstraint for amount_charged >= 0 per schema.sq1
+    __table_args__ = (
+        CheckConstraint('amount_charged >= 0', name='chk_payment_amount'),
+    )
+
     payment_id        = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    ticket_id         = db.Column(db.Integer, db.ForeignKey("ticket.ticket_id"), nullable=False, unique=True)
-    amount_charged    = db.Column(db.Numeric(8, 2), nullable=False)
-    payment_method    = db.Column(db.Enum(PaymentMethodEnum),  nullable=False)
+    ticket_id         = db.Column(db.Integer, db.ForeignKey("ticket.ticket_id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False, unique=True)  # Fixed: added onupdate/ondelete per schema.sq1
+    amount_charged    = db.Column(db.Numeric(10, 2), nullable=False)  # Fixed: Numeric(8,2)->Numeric(10,2) per schema.sq1
+    payment_method    = db.Column(db.Enum(PaymentMethodEnum, create_constraint=True, name='ck_payment_method'),  nullable=False)  # Fixed: added create_constraint + name
     payment_timestamp = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
-    payment_status    = db.Column(db.Enum(PaymentStatusEnum),  nullable=False, default=PaymentStatusEnum.pending)
+    payment_status    = db.Column(db.Enum(PaymentStatusEnum, create_constraint=True, name='ck_payment_status'),  nullable=False, default=PaymentStatusEnum.pending)  # Fixed: added create_constraint + name
     stripe_payment_intent_id = db.Column(db.String(100), nullable=True, unique=True)
 
     # Relationships
@@ -344,17 +385,23 @@ class Reservation(db.Model):
     """
     __tablename__ = "reservation"
 
+    # Fixed: added CheckConstraints per schema.sq1/Task5
+    __table_args__ = (
+        CheckConstraint('end_datetime > start_datetime', name='chk_reservation_time'),
+        CheckConstraint('quoted_fee >= 0', name='chk_reservation_fee'),
+    )
+
     reservation_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    customer_id    = db.Column(db.Integer, db.ForeignKey("customer.customer_id"), nullable=True)
-    vehicle_id     = db.Column(db.Integer, db.ForeignKey("vehicle.vehicle_id"),   nullable=True)
+    customer_id    = db.Column(db.Integer, db.ForeignKey("customer.customer_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5  # WARNING: routes/reservations.py:135 allows None
+    vehicle_id     = db.Column(db.Integer, db.ForeignKey("vehicle.vehicle_id", onupdate="CASCADE", ondelete="RESTRICT"),   nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5  # WARNING: routes/reservations.py:136 allows None
     phone          = db.Column(db.String(20),  nullable=True)
     driver_class   = db.Column(db.String(20),  nullable=True)
     floor_number   = db.Column(db.Integer,     nullable=True)
     start_datetime = db.Column(db.DateTime,  nullable=False)
-    end_datetime   = db.Column(db.DateTime,  nullable=True)
-    status         = db.Column(db.Enum(ReservationStatusEnum), nullable=False, default=ReservationStatusEnum.confirmed)
+    end_datetime   = db.Column(db.DateTime,  nullable=False)  # Fixed: nullable=True->False per schema.sq1/Task5  # WARNING: routes/reservations.py:134 sets end_datetime=None
+    status         = db.Column(db.Enum(ReservationStatusEnum, create_constraint=True, name='ck_reservation_status'), nullable=False, default=ReservationStatusEnum.confirmed)  # Fixed: added create_constraint + name
     created_at     = db.Column(db.DateTime,  nullable=False, server_default=db.func.now())
-    quoted_fee     = db.Column(db.Numeric(8, 2), nullable=True)
+    quoted_fee     = db.Column(db.Numeric(10, 2), nullable=False)  # Fixed: nullable=True->False, Numeric(8,2)->Numeric(10,2) per schema.sq1/Task5  # WARNING: routes/reservations.py:138 allows None
 
     # Relationships
     customer = db.relationship("Customer", back_populates="reservations")
@@ -378,9 +425,9 @@ class OccupancyLog(db.Model):
     __tablename__ = "occupancy_log"
 
     log_id      = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    spot_id     = db.Column(db.Integer, db.ForeignKey("parking_spot.spot_id"), nullable=False)
+    spot_id     = db.Column(db.Integer, db.ForeignKey("parking_spot.spot_id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False)  # Fixed: added onupdate/ondelete per schema.sq1
     changed_at  = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
-    change_type = db.Column(db.Enum(OccupancyChangeEnum), nullable=False)
+    change_type = db.Column(db.Enum(OccupancyChangeEnum, create_constraint=True, name='ck_change_type'), nullable=False)  # Fixed: added create_constraint + name
 
     # Relationships
     spot = db.relationship("ParkingSpot", back_populates="occupancy_log")
@@ -423,11 +470,8 @@ class PricingRule(db.Model):
     __tablename__ = "pricing_rule"
 
     rate_id          = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    rate_name        = db.Column(db.String(50),  nullable=False, unique=True)   # e.g. "standard", "weekend"
-    applicable_hours = db.Column(db.String(50),  nullable=True)
-    pricing_model    = db.Column(db.Enum(PricingModelEnum), nullable=False)
-    description      = db.Column(db.Text, nullable=True)
-    program          = db.Column(db.String(100), nullable=True)   # e.g. "pricing.standard_rate"
-
-    def __repr__(self):
-        return f"<PricingRule {self.rate_id}: {self.rate_name} [{self.pricing_model.value}]>"
+    rate_name        = db.Column(db.String(100),  nullable=False, unique=True)   # Fixed: String(50)->String(100) per schema.sq1
+    applicable_hours = db.Column(db.String(100),  nullable=False)  # Fixed: String(50)->String(100), nullable=True->False per schema.sq1/Task5
+    pricing_model    = db.Column(db.Enum(PricingModelEnum, create_constraint=True, name='ck_pricing_model'), nullable=False)  # Fixed: added create_constraint + name
+    description      = db.Column(db.Text, nullable=False)  # Fixed: nullable=True->False per schema.sq1/Task5
+    program          = db.Column(db.String(255), nullable=False)   # Fixed: String(100)->String(255), nullable=True->False per schema.sq1/Task5
