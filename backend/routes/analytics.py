@@ -58,16 +58,6 @@ def _parse_range():
     return start_dt, end_dt
 
 
-def _spot_filter(query, floor_id):
-    """Join OccupancyLog -> ParkingSpot and filter by floor when requested."""
-    from models import ParkingSpot
-    if floor_id is not None:
-        query = query.join(
-            ParkingSpot, ParkingSpot.spot_id == query.column_descriptions[0]['entity'].spot_id,
-        ).filter(ParkingSpot.floor_id == floor_id)
-    return query
-
-
 # ------------------------------------------------------------------
 #  GET /v1/analytics/utilization
 #  WARNING: ROUTE COLLISION — this path is also registered in

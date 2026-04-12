@@ -15,7 +15,7 @@ from flask import Blueprint, jsonify, request, g
 
 from app import db
 from models import Staff, StaffRoleEnum, SystemEvent
-from utils import require_role, safe_int
+from utils import require_role, safe_int, log_error
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/v1')
 
@@ -56,11 +56,13 @@ def _audit(source, description, staff_id=None):
 @admin_bp.route('/users', methods=['GET'])
 @require_role('admin')
 def list_users():
+    """List all staff accounts."""
     try:
         users = Staff.query.all()
         return jsonify([_user_json(u) for u in users]), 200
-    except Exception:
-        return jsonify({'error': 'server_error'}), 500
+    except Exception as exc:
+        log_error('admin.list_users', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to list users'}), 500
 
 
 # ── GET /v1/users/<id> ────────────────────────────────────────────
@@ -68,13 +70,15 @@ def list_users():
 @admin_bp.route('/users/<int:user_id>', methods=['GET'])
 @require_role('admin')
 def get_user(user_id):
+    """Return details of a single staff account."""
     try:
         user = Staff.query.get(user_id)
         if not user:
-            return jsonify({'error': 'user_not_found'}), 404
+            return jsonify({'error': 'user_not_found', 'message': 'No user found with that ID'}), 404
         return jsonify(_user_json(user)), 200
-    except Exception:
-        return jsonify({'error': 'server_error'}), 500
+    except Exception as exc:
+        log_error('admin.get_user', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch user'}), 500
 
 
 # ── DELETE /v1/users/<id> ─────────────────────────────────────────
@@ -82,10 +86,11 @@ def get_user(user_id):
 @admin_bp.route('/users/<int:user_id>', methods=['DELETE'])
 @require_role('super_admin')
 def delete_user(user_id):
+    """Delete a staff account if it has no audit history."""
     try:
         user = Staff.query.get(user_id)
         if not user:
-            return jsonify({'error': 'user_not_found'}), 404
+            return jsonify({'error': 'user_not_found', 'message': 'No user found with that ID'}), 404
 
         has_audit = SystemEvent.query.filter(
             db.or_(
@@ -94,7 +99,7 @@ def delete_user(user_id):
             )
         ).first()
         if has_audit:
-            return jsonify({'error': 'delete_blocked_audit_history'}), 409
+            return jsonify({'error': 'delete_blocked_audit_history', 'message': 'Cannot delete user with audit history'}), 409
 
         operator_id = user.operator_id
         username = user.username
@@ -103,9 +108,10 @@ def delete_user(user_id):
                f'Deleted staff account operator_id={operator_id} username={username}')
         db.session.commit()
         return jsonify({'message': 'user deleted'}), 200
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
-        return jsonify({'error': 'server_error'}), 500
+        log_error('admin.delete_user', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to delete user'}), 500
 
 
 # ── PUT /v1/users/<id>/role ───────────────────────────────────────
@@ -113,20 +119,21 @@ def delete_user(user_id):
 @admin_bp.route('/users/<int:user_id>/role', methods=['PUT'])
 @require_role('admin')
 def change_role(user_id):
+    """Change a staff member's role."""
     try:
         user = Staff.query.get(user_id)
         if not user:
-            return jsonify({'error': 'user_not_found'}), 404
+            return jsonify({'error': 'user_not_found', 'message': 'No user found with that ID'}), 404
 
         data = request.get_json(silent=True) or {}
         role_val = data.get('role')
         if not role_val:
-            return jsonify({'error': 'missing_required_field'}), 400
+            return jsonify({'error': 'missing_required_field', 'message': 'role is required'}), 400
 
         try:
             new_role = StaffRoleEnum(role_val)
         except ValueError:
-            return jsonify({'error': 'invalid_role'}), 400
+            return jsonify({'error': 'invalid_role', 'message': 'Unrecognized role value'}), 400
 
         old_role = user.role.value
         user.role = new_role
@@ -135,9 +142,10 @@ def change_role(user_id):
                staff_id=user_id)
         db.session.commit()
         return jsonify(_user_json(user)), 200
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
-        return jsonify({'error': 'server_error'}), 500
+        log_error('admin.change_role', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to change role'}), 500
 
 
 # ── PUT /v1/users/<id>/password ───────────────────────────────────
@@ -145,15 +153,16 @@ def change_role(user_id):
 @admin_bp.route('/users/<int:user_id>/password', methods=['PUT'])
 @require_role('admin')
 def change_password(user_id):
+    """Reset a staff member's password (admin action)."""
     try:
         user = Staff.query.get(user_id)
         if not user:
-            return jsonify({'error': 'user_not_found'}), 404
+            return jsonify({'error': 'user_not_found', 'message': 'No user found with that ID'}), 404
 
         data = request.get_json(silent=True) or {}
         password = data.get('password')
         if not password:
-            return jsonify({'error': 'missing_required_field'}), 400
+            return jsonify({'error': 'missing_required_field', 'message': 'password is required'}), 400
 
         user.password_hash = bcrypt.hashpw(
             password.encode('utf-8'), bcrypt.gensalt()
@@ -163,9 +172,10 @@ def change_password(user_id):
                staff_id=user_id)
         db.session.commit()
         return jsonify({'message': 'password updated'}), 200
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
-        return jsonify({'error': 'server_error'}), 500
+        log_error('admin.change_password', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to change password'}), 500
 
 
 # ── PUT /v1/users/<id>/status ─────────────────────────────────────
@@ -173,21 +183,22 @@ def change_password(user_id):
 @admin_bp.route('/users/<int:user_id>/status', methods=['PUT'])
 @require_role('admin')
 def change_status(user_id):
+    """Activate or deactivate a staff account."""
     try:
         user = Staff.query.get(user_id)
         if not user:
-            return jsonify({'error': 'user_not_found'}), 404
+            return jsonify({'error': 'user_not_found', 'message': 'No user found with that ID'}), 404
 
         data = request.get_json(silent=True) or {}
         status_val = data.get('status')
         if not status_val:
-            return jsonify({'error': 'missing_required_field'}), 400
+            return jsonify({'error': 'missing_required_field', 'message': 'status is required'}), 400
         if status_val not in ('active', 'deactivated'):
-            return jsonify({'error': 'invalid_status'}), 400
+            return jsonify({'error': 'invalid_status', 'message': 'status must be active or deactivated'}), 400
 
         # Cannot deactivate yourself
         if status_val == 'deactivated' and g.current_user.operator_id == user_id:
-            return jsonify({'error': 'cannot_deactivate_self'}), 403
+            return jsonify({'error': 'cannot_deactivate_self', 'message': 'You cannot deactivate your own account'}), 403
 
         user.is_active = (status_val == 'active')
         _audit('admin_bp.status_change',
@@ -195,9 +206,10 @@ def change_status(user_id):
                staff_id=user_id)
         db.session.commit()
         return jsonify(_user_json(user)), 200
-    except Exception:
+    except Exception as exc:
         db.session.rollback()
-        return jsonify({'error': 'server_error'}), 500
+        log_error('admin.change_status', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to change status'}), 500
 
 
 # ── GET /v1/admin/history ─────────────────────────────────────────
@@ -205,6 +217,7 @@ def change_status(user_id):
 @admin_bp.route('/admin/history', methods=['GET'])
 @require_role('admin')
 def get_history():
+    """Query the audit log with optional filters for userId, action, and date."""
     try:
         q = SystemEvent.query
 
@@ -224,10 +237,11 @@ def get_history():
             try:
                 dt = datetime.fromisoformat(from_date)
             except ValueError:
-                return jsonify({'error': 'invalid_date_format'}), 400
+                return jsonify({'error': 'invalid_date_format', 'message': 'from must be a valid ISO 8601 datetime'}), 400
             q = q.filter(SystemEvent.created_at >= dt)
 
         events = q.order_by(SystemEvent.event_id.desc()).all()
         return jsonify([_event_json(e) for e in events]), 200
-    except Exception:
-        return jsonify({'error': 'server_error'}), 500
+    except Exception as exc:
+        log_error('admin.get_history', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to fetch history'}), 500

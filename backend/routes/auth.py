@@ -91,6 +91,7 @@ def _token_response(token_obj, staff):
 
 @token_auth_bp.route('/login', methods=['POST'])
 def login():
+    """Authenticate with username/password and return a Bearer token."""
     from app import db
     from models import Staff
 
@@ -136,6 +137,7 @@ def login():
 @token_auth_bp.route('/refresh', methods=['POST'])
 @login_required
 def refresh():
+    """Exchange the current token for a new one."""
     from app import db
 
     g.session_token.is_active = False
@@ -152,6 +154,7 @@ def refresh():
 @token_auth_bp.route('/logout', methods=['POST'])
 @login_required
 def logout():
+    """Revoke the current token."""
     from app import db
 
     g.session_token.is_active = False
@@ -167,6 +170,7 @@ def logout():
 @token_auth_bp.route('/me', methods=['GET'])
 @login_required
 def me():
+    """Return the current authenticated user's profile."""
     user = g.current_user
     return jsonify({
         'operatorId': user.operator_id,
@@ -183,6 +187,7 @@ def me():
 @token_auth_bp.route('/register', methods=['POST'])
 @require_role('admin')
 def register():
+    """Admin-only: create a new staff account and return a token."""
     from app import db
     from models import Staff, StaffRoleEnum
 
@@ -243,6 +248,7 @@ def register():
 @token_auth_bp.route('/change-password', methods=['POST'])
 @login_required
 def change_password():
+    """Change the current user's password and revoke other tokens."""
     from app import db
     from models import SessionToken
 

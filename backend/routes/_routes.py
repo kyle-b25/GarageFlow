@@ -64,6 +64,7 @@ def _count_spots(spots):
 
 @v1_bp.route('/capacity', methods=['GET'])
 def get_capacity():
+    """Return total, occupied, and available spot counts by type."""
     from app import db
     from models import ParkingSpot
 
@@ -89,6 +90,7 @@ def get_capacity():
 
 @v1_bp.route('/capacity/status', methods=['GET'])
 def get_capacity_status():
+    """Return available spot counts by type."""
     from app import db
     from models import ParkingSpot, SpotTypeEnum, SpotStatusEnum
 
@@ -110,17 +112,18 @@ def get_capacity_status():
 #  GET /v1/capacity/floors/<floorId>
 # ------------------------------------------------------------------
 
-@v1_bp.route('/capacity/floors/<int:floorId>', methods=['GET'])
-def get_capacity_floor(floorId):
+@v1_bp.route('/capacity/floors/<int:floor_id>', methods=['GET'])
+def get_capacity_floor(floor_id):
+    """Return capacity breakdown for a single floor."""
     from app import db
     from models import Floor, ParkingSpot
 
     try:
-        floor = Floor.query.filter_by(floor_id=floorId).first()
+        floor = Floor.query.filter_by(floor_id=floor_id).first()
         if not floor:
-            return jsonify({'error': 'floor_not_found'}), 404
+            return jsonify({'error': 'floor_not_found', 'message': 'No floor found with that ID'}), 404
 
-        spots = ParkingSpot.query.filter_by(floor_id=floorId).all()
+        spots = ParkingSpot.query.filter_by(floor_id=floor_id).all()
         total, occupied, available, by_type = _count_spots(spots)
 
         return jsonify({
@@ -323,6 +326,7 @@ def _handle_charge_refunded(charge_data):
 
 @v1_bp.route('/webhooks/stripe', methods=['POST'])
 def stripe_webhook():
+    """Handle incoming Stripe webhook events."""
     from app import db
 
     # Step 1 — Signature verification

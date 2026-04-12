@@ -52,6 +52,7 @@ def _payment_json(payment):
 @payments_bp.route('', methods=['POST'])
 @login_required
 def create_payment():
+    """Charge a closed ticket via Stripe PaymentIntent."""
     from app import db
     from models import (
         Ticket, Payment, TicketStatusEnum,
@@ -119,6 +120,7 @@ def create_payment():
 @payments_bp.route('/reports', methods=['GET'])
 @login_required
 def payment_reports():
+    """Revenue summary over a date range."""
     from app import db
     from models import Payment, PaymentStatusEnum
 
@@ -179,6 +181,7 @@ def payment_reports():
 @payments_bp.route('/<int:payment_id>', methods=['GET'])
 @login_required
 def get_payment(payment_id):
+    """Return details of a single payment."""
     from models import Payment
 
     payment = Payment.query.get(payment_id)
@@ -196,6 +199,7 @@ def get_payment(payment_id):
 @payments_bp.route('', methods=['GET'])
 @login_required
 def list_payments():
+    """Query payments by ticketId or license plate."""
     from models import Payment, Ticket, Vehicle
 
     ticket_id = request.args.get('ticketId')
@@ -228,6 +232,7 @@ def list_payments():
 @payments_bp.route('/<int:payment_id>/refund', methods=['POST'])
 @login_required
 def refund_payment(payment_id):
+    """Process a full or partial refund via Stripe."""
     from app import db
     from models import Payment, PaymentStatusEnum
 
@@ -272,12 +277,7 @@ def refund_payment(payment_id):
         return jsonify({'error': 'server_error',
                         'message': 'Refund succeeded but failed to update local record'}), 500
 
-    try:
-        from models import SystemEvent
-        db.session.add(SystemEvent(source=SOURCE, description=f'Refund processed for payment {payment_id}'))
-        db.session.commit()
-    except Exception:
-        pass
+    log_error(SOURCE, f'Refund processed for payment {payment_id}')
     return jsonify(_payment_json(payment)), 200
 
 
@@ -288,6 +288,7 @@ def refund_payment(payment_id):
 @payments_bp.route('/<int:payment_id>/override', methods=['POST'])
 @require_role('admin')
 def override_payment(payment_id):
+    """Admin-only manual override of payment fields."""
     from app import db
     from models import Payment, PaymentStatusEnum, PaymentMethodEnum
 
@@ -335,14 +336,6 @@ def override_payment(payment_id):
         return jsonify({'error': 'server_error',
                         'message': 'Failed to save override'}), 500
 
-    try:
-        from models import SystemEvent
-        db.session.add(SystemEvent(
-            source=SOURCE,
-            description=f'Admin override on payment {payment_id} by '
-                        f'{g.current_user.username if g.current_user else "unknown"}: {", ".join(changes)}',
-        ))
-        db.session.commit()
-    except Exception:
-        pass
+    log_error(SOURCE, f'Admin override on payment {payment_id} by '
+              f'{g.current_user.username if g.current_user else "unknown"}: {", ".join(changes)}')
     return jsonify(_payment_json(payment)), 200
