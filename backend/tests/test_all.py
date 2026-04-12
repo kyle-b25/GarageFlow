@@ -19,6 +19,7 @@ import pytest
 from app import app, db
 from models import (
     Garage, Floor, ParkingSpot, Reservation, Ticket,
+    Customer, Vehicle, AccountStatusEnum, VehicleTypeEnum,
     SpotTypeEnum, SpotStatusEnum, TicketStatusEnum, ReservationStatusEnum,
 )
 
@@ -50,6 +51,7 @@ def app_ctx():
             name='Test Garage',
             total_capacity=8,
             number_of_floors=2,
+            operating_hours='6:00am-midnight',
         )
         db.session.add(garage)
         db.session.flush()
@@ -460,6 +462,16 @@ class TestOccupancyService:
         with app.app_context():
             arrival = datetime.utcnow() + timedelta(hours=2)
 
+            # Create a customer and vehicle for reservation FK requirements
+            cust = Customer(name='Conflict Test', email='conflict@test.com',
+                            phone_number='555-CONF', account_status=AccountStatusEnum.active)
+            db.session.add(cust)
+            db.session.flush()
+            veh = Vehicle(license_plate='CONF-001', plate_state='NY',
+                          vehicle_type=VehicleTypeEnum.car, customer_id=cust.customer_id)
+            db.session.add(veh)
+            db.session.flush()
+
             # Occupy all standard spots except one on each floor
             std_spots = ParkingSpot.query.filter_by(
                 spot_type=SpotTypeEnum.standard,
@@ -483,10 +495,14 @@ class TestOccupancyService:
                 garage_id=ctx['garage_id']
             ).all():
                 db.session.add(Reservation(
+                    customer_id=cust.customer_id,
+                    vehicle_id=veh.vehicle_id,
                     phone='conflict',
                     driver_class='standard',
                     floor_number=floor.floor_number,
                     start_datetime=arrival + timedelta(minutes=10),
+                    end_datetime=arrival + timedelta(hours=2),
+                    quoted_fee=0,
                     status=ReservationStatusEnum.confirmed,
                 ))
             db.session.commit()

@@ -89,7 +89,7 @@ def create_staff():
         return jsonify({'error': 'server_error', 'message': 'Failed to create staff member'}), 500
 
     return jsonify({
-        'operator_id': staff.operator_id,
+        'operatorId':  staff.operator_id,
         'name':        staff.name,
         'username':    staff.username,
         'role':        staff.role.value,
@@ -200,9 +200,7 @@ def get_utilization():
 
     except Exception as exc:
         db.session.rollback()
-        from models import SystemEvent
-        db.session.add(SystemEvent(source='analytics.utilization', description=str(exc)))
-        db.session.commit()
+        log_error('staff.get_utilization', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to generate utilization report'}), 500
 
 
@@ -263,9 +261,7 @@ def get_revenue():
 
     except Exception as exc:
         db.session.rollback()
-        from models import SystemEvent
-        db.session.add(SystemEvent(source='analytics.revenue', description=str(exc)))
-        db.session.commit()
+        log_error('staff.get_revenue', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to generate revenue report'}), 500
 
 
@@ -327,7 +323,5 @@ def get_peak_hours():
 
     except Exception as exc:
         db.session.rollback()
-        from models import SystemEvent
-        db.session.add(SystemEvent(source='analytics.peak_hours', description=str(exc)))
-        db.session.commit()
+        log_error('staff.get_peak_hours', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to generate peak-hours report'}), 500
