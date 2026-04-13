@@ -187,24 +187,11 @@ function renderTable(rows) {
 //  FLOOR OVERVIEW
 // =============================================================
 
-async function showFloor() {
-  const btn     = document.getElementById('btn-floor-show');
-  const cards   = document.getElementById('floor-cards');
-  const visible = btn.dataset.visible === 'true';
+async function loadFloorData(){
+  const floors = await getAllFloors();
+  const cards = document.getElementById('floor-cards');
 
-  // If data is showing, hide it and reset
-  if (visible) {
-    cards.style.display = 'none';
-    btn.dataset.visible = 'false';
-    btn.textContent     = 'Load Floor Data';
-    return;
-  }
-
-  // Otherwise load (or just re-show if already loaded)
-  setLoading(btn, true);
-  try {
-    const floors = await getAllFloors();
-    cards.innerHTML = '';
+  cards.innerHTML = '';
     floors.forEach(f => {
       const floorName = f.floorName || `Floor ${f.floorNumber}`;
       const occupied = f.totalSpots - f.availableSpots;
@@ -231,9 +218,38 @@ async function showFloor() {
     });
 
     cards.style.display = 'grid';
+}
+
+let floorPollingInterval = null;
+
+async function showFloor() {
+  const btn     = document.getElementById('btn-floor-show');
+  const cards   = document.getElementById('floor-cards');
+  const visible = btn.dataset.visible === 'true';
+
+
+  if (visible) {
+    //Stops multiple polling intervals from starting
+    clearInterval(floorPollingInterval);
+    floorPollingInterval = null;
+
+    cards.style.display = 'none';
+    btn.dataset.visible = 'false';
+    btn.textContent     = 'Load Floor Data';
+    return;
+  }
+
+  setLoading(btn, true);
+  try {
+    await loadFloorData();
+
+    //Start polling every 5 seconds
+    clearInterval(floorPollingInterval);
+    floorPollingInterval = setInterval(loadFloorData, 5000);
+
     btn.dataset.visible = 'true';
     btn.textContent     = 'Hide Floor Data';
-	btn.dataset.label   = 'Hide Floor Data';
+	  btn.dataset.label   = 'Hide Floor Data';
   } catch (err) {
     alert(`Could not load floor data: ${err.message}`);
   } finally {
