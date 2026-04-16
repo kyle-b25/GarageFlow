@@ -18,6 +18,7 @@ import {
   getPeakHours,
 } from './api.js';
 
+let floorPollInterval = null;
 
 // =============================================================
 //  UTILITY
@@ -204,6 +205,7 @@ async function showFloor() {
 
   // If data is showing, hide it and reset
   if (visible) {
+    if (floorPollInterval) { clearInterval(floorPollInterval); floorPollInterval = null; }
     cards.style.display = 'none';
     btn.dataset.visible = 'false';
     btn.textContent     = 'Load Floor Data';
@@ -244,6 +246,29 @@ async function showFloor() {
     btn.dataset.visible = 'true';
     btn.textContent     = 'Hide Floor Data';
 	btn.dataset.label   = 'Hide Floor Data';
+
+    // Start polling every 30 seconds
+    if (floorPollInterval) clearInterval(floorPollInterval);
+    floorPollInterval = setInterval(async () => {
+      try {
+        const floors = await getAllFloors();
+        const cards = document.getElementById('floor-cards');
+        cards.innerHTML = '';
+        floors.forEach(f => {
+          const floorName = f.floorName || `Floor ${f.floorNumber}`;
+          const occupied = f.totalSpots - f.availableSpots;
+          const pct = f.totalSpots ? Math.round((occupied / f.totalSpots) * 100) : 0;
+          const isFull = f.availableSpots === 0;
+          cards.innerHTML += `
+            <div class="zone-card">
+              <div class="zone-card-title">${floorName}</div>
+              <div class="zone-row"><span class="zone-key">Available</span><span class="zone-val ${isFull ? 'full' : ''}">${isFull ? 'Full' : f.availableSpots}</span></div>
+              <div class="zone-row"><span class="zone-key">Total</span><span class="zone-val">${f.totalSpots}</span></div>
+              <div class="zone-row"><span class="zone-key">Occupancy</span><span class="zone-val">${pct}%</span></div>
+            </div>`;
+        });
+      } catch (_) { /* silently skip failed poll */ }
+    }, 30000);
   } catch (err) {
     alert(`Could not load floor data: ${err.message}`);
   } finally {
