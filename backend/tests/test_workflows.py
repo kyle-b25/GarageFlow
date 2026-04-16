@@ -445,6 +445,104 @@ class TestBugReservationDriverClassValidation:
         )
 
 
+# ==================================================================
+#  WORKFLOW 6 — Edge Cases & Validation
+# ==================================================================
+
+class TestEdgeCases:
+
+    def test_duplicate_plate_rejected(self, seeded_client):
+        """POST /v1/tickets twice with the same plate → 409 duplicate_plate."""
+        resp1 = create_ticket(seeded_client, 'DUP-EDGE-1', 'standard')
+        assert resp1.status_code == 201
+        resp2 = create_ticket(seeded_client, 'DUP-EDGE-1', 'standard')
+        assert resp2.status_code == 409
+        assert 'duplicate' in resp2.get_json()['error']
+
+    def test_exit_nonexistent_ticket(self, seeded_client):
+        """PUT /v1/tickets/99999/exit → 404 ticket_not_found."""
+        resp = exit_ticket(seeded_client, 99999, 'GHOST-001', 'cash')
+        assert resp.status_code == 404
+        assert resp.get_json()['error'] == 'ticket_not_found'
+
+    def test_exit_already_closed_ticket(self, seeded_client):
+        """Create → exit → exit again → 409 ticket_already_closed."""
+        entry = create_ticket(seeded_client, 'CLOSE-TWICE', 'standard')
+        tid = entry.get_json()['ticketId']
+        resp1 = exit_ticket(seeded_client, tid, 'CLOSE-TWICE', 'cash')
+        assert resp1.status_code == 200
+
+        resp2 = exit_ticket(seeded_client, tid, 'CLOSE-TWICE', 'cash')
+        assert resp2.status_code == 409
+        assert resp2.get_json()['error'] == 'ticket_already_closed'
+
+    def test_reservation_past_date_rejected(self, seeded_client):
+        """POST /v1/reservations with past scheduledArrival → 400."""
+        past = (datetime.utcnow() - timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        resp = create_reservation(seeded_client, '555-8888', 'PAST-001', past, 'standard')
+        assert resp.status_code == 400
+        assert resp.get_json()['error'] == 'invalid_scheduled_arrival'
+
+    def test_capacity_endpoint_accuracy(self, seeded_client):
+        """Fill all 8 spots, verify capacity shows 0 available / 8 occupied,
+        then exit one and verify available == 1."""
+        tickets = []
+        # 4 standard
+        for i in range(4):
+            resp = create_ticket(seeded_client, f'FULL-{i+1}', 'standard')
+            assert resp.status_code == 201
+            tickets.append((resp.get_json()['ticketId'], f'FULL-{i+1}'))
+        # 2 accessibility
+        for i in range(2):
+            resp = create_ticket(seeded_client, f'FULL-A{i+1}', 'accessibility')
+            assert resp.status_code == 201
+            tickets.append((resp.get_json()['ticketId'], f'FULL-A{i+1}'))
+        # 2 staff (employee driver class)
+        for i in range(2):
+            resp = create_ticket(seeded_client, f'FULL-E{i+1}', 'employee')
+            assert resp.status_code == 201
+            tickets.append((resp.get_json()['ticketId'], f'FULL-E{i+1}'))
+
+        cap = seeded_client.get('/v1/capacity').get_json()
+        assert cap['available'] == 0
+        assert cap['occupied'] == 8
+
+        # Exit one ticket
+        tid, plate = tickets[0]
+        exit_ticket(seeded_client, tid, plate, 'cash')
+
+        cap2 = seeded_client.get('/v1/capacity').get_json()
+        assert cap2['available'] == 1
+
+    def test_exit_calculates_fee(self, seeded_client):
+        """Exit response includes totalFee (number >= 0) and duration (number >= 0)."""
+        entry = create_ticket(seeded_client, 'FEE-001', 'standard')
+        tid = entry.get_json()['ticketId']
+        resp = exit_ticket(seeded_client, tid, 'FEE-001', 'cash')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert isinstance(data['totalFee'], (int, float))
+        assert data['totalFee'] >= 0
+        assert isinstance(data['duration'], (int, float))
+        assert data['duration'] >= 0
+
+    def test_spot_released_on_exit(self, seeded_client):
+        """After exit, capacity available count increases by 1."""
+        cap_before = seeded_client.get('/v1/capacity').get_json()
+        avail_before = cap_before['available']
+
+        entry = create_ticket(seeded_client, 'REL-001', 'standard')
+        tid = entry.get_json()['ticketId']
+
+        cap_mid = seeded_client.get('/v1/capacity').get_json()
+        assert cap_mid['available'] == avail_before - 1
+
+        exit_ticket(seeded_client, tid, 'REL-001', 'cash')
+
+        cap_after = seeded_client.get('/v1/capacity').get_json()
+        assert cap_after['available'] == avail_before
+
+
 class TestBugPiiWipeScope:
     """Bug: DELETE /v1/tickets/{id}/personal mutates the shared Vehicle record,
     corrupting license_plate for all tickets referencing that vehicle."""

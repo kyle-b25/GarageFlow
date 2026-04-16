@@ -107,6 +107,7 @@ def post_reservation():
         if not vehicle:
             vehicle = Vehicle(
                 license_plate=license_plate,
+                plate_state=data.get('plateState', 'N/A'),  # Fixed: plate_state is NOT NULL per schema.sq1
                 vehicle_type=VehicleTypeEnum.car,
             )
             db.session.add(vehicle)
@@ -129,15 +130,43 @@ def post_reservation():
     if not spot:
         return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
 
+    # Fixed: customer_id is NOT NULL per schema.sq1 — get-or-create from phone
+    from models import AccountStatusEnum
+    customer_id = data.get('customerId')
+    if not customer_id:
+        customer = Customer.query.filter_by(phone_number=phone).first()
+        if not customer:
+            customer = Customer(
+                name=data.get('name', phone),
+                email=data.get('email', f'{phone}@placeholder.local'),
+                phone_number=phone,
+                account_status=AccountStatusEnum.active,
+            )
+            db.session.add(customer)
+            db.session.flush()
+        customer_id = customer.customer_id
+
+    # Fixed: end_datetime is NOT NULL per schema.sq1 — default to start + 2h
+    arrival_naive = parsed_arrival.replace(tzinfo=None)
+    from datetime import timedelta
+    end_dt_raw = data.get('endDatetime')
+    if end_dt_raw:
+        try:
+            end_datetime = datetime.fromisoformat(end_dt_raw.replace('Z', '+00:00')).replace(tzinfo=None)
+        except (ValueError, AttributeError):
+            return jsonify({'error': 'invalid_end_datetime', 'message': 'endDatetime is not a valid ISO 8601 datetime'}), 400
+    else:
+        end_datetime = arrival_naive + timedelta(hours=2)
+
     reservation = Reservation(
         phone=phone,
         driver_class=effective_class,
-        start_datetime=parsed_arrival.replace(tzinfo=None),
-        end_datetime=None,
-        customer_id=data.get('customerId'),
-        vehicle_id=vehicle.vehicle_id if vehicle else None,
+        start_datetime=arrival_naive,
+        end_datetime=end_datetime,  # Fixed: was None, now NOT NULL per schema.sq1
+        customer_id=customer_id,  # Fixed: was nullable, now NOT NULL per schema.sq1
+        vehicle_id=vehicle.vehicle_id,  # Fixed: was conditional None, now NOT NULL per schema.sq1
         floor_number=floor.floor_number,
-        quoted_fee=data.get('quotedFee'),
+        quoted_fee=data.get('quotedFee', 0),  # Fixed: was None, now NOT NULL per schema.sq1
         status=ReservationStatusEnum.confirmed,
     )
     try:
@@ -296,8 +325,8 @@ def cancel_reservation(reservation_id):
                 Reservation.status == ReservationStatusEnum.confirmed,
             ).first()
             if not other_active:
-                customer.phone_number = None
-                customer.name = None
+                customer.phone_number = f'REDACTED-{customer.customer_id}'  # Fixed: phone_number is NOT NULL per schema.sq1
+                customer.name = 'REDACTED'  # Fixed: name is NOT NULL per schema.sq1
 
         db.session.commit()
         return jsonify(_reservation_json(r)), 200
@@ -345,10 +374,20 @@ def check_in_reservation(reservation_id):
         spot.status = SpotStatusEnum.occupied
         floor.available_spots -= 1
 
+        # Fixed: resolve entry gate (entry_gate_id is NOT NULL per schema.sq1)
+        from models import GateEvent, GateTypeEnum, GateStatusEnum
+        garage_id = floor.garage_id
+        entry_gate = GateEvent.query.filter_by(garage_id=garage_id, gate_type=GateTypeEnum.entry).first()
+        if not entry_gate:
+            entry_gate = GateEvent(garage_id=garage_id, gate_type=GateTypeEnum.entry, status=GateStatusEnum.open)
+            db.session.add(entry_gate)
+            db.session.flush()
+
         # Create ticket
         ticket = Ticket(
             spot_id=spot.spot_id,
             vehicle_id=vehicle.vehicle_id,
+            entry_gate_id=entry_gate.gate_id,  # Fixed: entry_gate_id is NOT NULL per schema.sq1
             entry_timestamp=datetime.utcnow(),
             status=TicketStatusEnum.active,
         )

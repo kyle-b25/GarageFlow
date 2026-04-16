@@ -94,11 +94,14 @@ def post_ticket():
         return jsonify({'error': 'garage_full', 'message': 'Garage is full'}), 503
 
     try:
+        from models import GateEvent, GateTypeEnum, GateStatusEnum, Floor as FloorModel  # Fixed: import for gate lookup
+
         # Get or create Vehicle
         vehicle = Vehicle.query.filter_by(license_plate=license_plate).first()
         if not vehicle:
             vehicle = Vehicle(
                 license_plate=license_plate,
+                plate_state=data.get('plateState', 'N/A'),  # Fixed: plate_state is NOT NULL per schema.sq1
                 vehicle_type=VehicleTypeEnum.car,
                 customer_id=None,
             )
@@ -114,10 +117,19 @@ def post_ticket():
         if not spot:
             return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
 
+        # Fixed: resolve entry gate (entry_gate_id is NOT NULL per schema.sq1)
+        garage_id = floor.garage_id
+        entry_gate = GateEvent.query.filter_by(garage_id=garage_id, gate_type=GateTypeEnum.entry).first()
+        if not entry_gate:
+            entry_gate = GateEvent(garage_id=garage_id, gate_type=GateTypeEnum.entry, status=GateStatusEnum.open)
+            db.session.add(entry_gate)
+            db.session.flush()
+
         # Create Ticket + mark spot occupied + OccupancyLog
         ticket = Ticket(
             vehicle_id=vehicle.vehicle_id,
             spot_id=spot.spot_id,
+            entry_gate_id=entry_gate.gate_id,  # Fixed: entry_gate_id is NOT NULL per schema.sq1
             entry_timestamp=datetime.utcnow(),
             status=TicketStatusEnum.active,
             phone=phone,
@@ -320,6 +332,7 @@ def delete_ticket_personal(ticket_id):
             # Dissociate this ticket from the shared vehicle instead of mutating it
             redacted_vehicle = Vehicle(
                 license_plate=f'REDACTED-{ticket.ticket_id}',
+                plate_state='REDACTED',  # Fixed: plate_state is NOT NULL per schema.sq1
                 vehicle_type=vehicle.vehicle_type,
             )
             db.session.add(redacted_vehicle)

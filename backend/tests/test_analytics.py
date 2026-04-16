@@ -40,7 +40,7 @@ def seeded(client, auth_token):
     Returns dict with IDs for assertions.
     """
     with app.app_context():
-        garage = Garage(name='Test', total_capacity=5, number_of_floors=1)
+        garage = Garage(name='Test', total_capacity=5, number_of_floors=1, operating_hours='24/7')  # Fixed: operating_hours is NOT NULL
         db.session.add(garage)
         db.session.flush()
 
@@ -163,7 +163,7 @@ class TestUtilization:
     def test_empty_log(self, client, auth_token):
         """No occupancy events -> empty buckets, zero spots."""
         with app.app_context():
-            g = Garage(name='Empty', total_capacity=0, number_of_floors=0)
+            g = Garage(name='Empty', total_capacity=1, number_of_floors=1, operating_hours='24/7')  # Fixed: CHECK constraints require > 0, operating_hours NOT NULL
             db.session.add(g)
             db.session.commit()
 

@@ -229,9 +229,9 @@ class Customer(db.Model):
     __tablename__ = "customer"
 
     customer_id    = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name           = db.Column(db.String(100), nullable=False)   # Fixed: nullable=True->False per schema.sq1/Task5  # WARNING: routes/reservations.py:293 sets name=None on cancel
+    name           = db.Column(db.String(100), nullable=False)   # Fixed: nullable=True->False per schema.sq1/Task5
     email          = db.Column(db.String(120), unique=True, nullable=False)
-    phone_number   = db.Column(db.String(25),  nullable=False, unique=True)  # Fixed: nullable=True->False, added unique=True, String(20)->String(25) per schema.sq1/Task5  # WARNING: routes/reservations.py:292 sets phone_number=None on cancel
+    phone_number   = db.Column(db.String(25),  nullable=False, unique=True)  # Fixed: nullable=True->False, added unique=True, String(20)->String(25) per schema.sq1/Task5
     date_created   = db.Column(db.DateTime,    nullable=False, server_default=db.func.now())
     account_status = db.Column(db.Enum(AccountStatusEnum, create_constraint=True, name='ck_account_status'), nullable=False, default=AccountStatusEnum.active)  # Fixed: added create_constraint + name
 
@@ -252,7 +252,7 @@ class Vehicle(db.Model):
 
     vehicle_id    = db.Column(db.Integer, primary_key=True, autoincrement=True)
     license_plate = db.Column(db.String(20),  nullable=False, unique=True)
-    plate_state   = db.Column(db.String(20),  nullable=False)  # Fixed: nullable=True->False, String(50)->String(20) per schema.sq1/Task5  # WARNING: routes/tickets.py:100-106 and routes/reservations.py:106-111 create Vehicle without plate_state
+    plate_state   = db.Column(db.String(20),  nullable=False)  # Fixed: nullable=True->False, String(50)->String(20) per schema.sq1/Task5
     vehicle_type  = db.Column(db.Enum(VehicleTypeEnum, create_constraint=True, name='ck_vehicle_type'), nullable=False)  # Fixed: added create_constraint + name
     customer_id   = db.Column(db.Integer, db.ForeignKey("customer.customer_id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # Fixed: added onupdate/ondelete per schema.sq1
 
@@ -329,7 +329,7 @@ class Ticket(db.Model):
     ticket_id       = db.Column(db.Integer, primary_key=True, autoincrement=True)
     entry_timestamp = db.Column(db.DateTime,  nullable=False, server_default=db.func.now())
     exit_timestamp  = db.Column(db.DateTime,  nullable=True)
-    entry_gate_id   = db.Column(db.Integer,   db.ForeignKey("gate_event.gate_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5  # WARNING: routes/tickets.py:118-124 and routes/reservations.py:341-346 create Ticket without entry_gate_id
+    entry_gate_id   = db.Column(db.Integer,   db.ForeignKey("gate_event.gate_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5
     exit_gate_id    = db.Column(db.Integer,   db.ForeignKey("gate_event.gate_id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # Fixed: added onupdate/ondelete per schema.sq1
     spot_id         = db.Column(db.Integer,   db.ForeignKey("parking_spot.spot_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: added onupdate/ondelete per schema.sq1
     vehicle_id      = db.Column(db.Integer,   db.ForeignKey("vehicle.vehicle_id", onupdate="CASCADE", ondelete="RESTRICT"),   nullable=False)  # Fixed: added onupdate/ondelete per schema.sq1
@@ -392,16 +392,16 @@ class Reservation(db.Model):
     )
 
     reservation_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    customer_id    = db.Column(db.Integer, db.ForeignKey("customer.customer_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5  # WARNING: routes/reservations.py:135 allows None
-    vehicle_id     = db.Column(db.Integer, db.ForeignKey("vehicle.vehicle_id", onupdate="CASCADE", ondelete="RESTRICT"),   nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5  # WARNING: routes/reservations.py:136 allows None
+    customer_id    = db.Column(db.Integer, db.ForeignKey("customer.customer_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5
+    vehicle_id     = db.Column(db.Integer, db.ForeignKey("vehicle.vehicle_id", onupdate="CASCADE", ondelete="RESTRICT"),   nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5
     phone          = db.Column(db.String(20),  nullable=True)
     driver_class   = db.Column(db.String(20),  nullable=True)
     floor_number   = db.Column(db.Integer,     nullable=True)
     start_datetime = db.Column(db.DateTime,  nullable=False)
-    end_datetime   = db.Column(db.DateTime,  nullable=False)  # Fixed: nullable=True->False per schema.sq1/Task5  # WARNING: routes/reservations.py:134 sets end_datetime=None
+    end_datetime   = db.Column(db.DateTime,  nullable=False)  # Fixed: nullable=True->False per schema.sq1/Task5
     status         = db.Column(db.Enum(ReservationStatusEnum, create_constraint=True, name='ck_reservation_status'), nullable=False, default=ReservationStatusEnum.confirmed)  # Fixed: added create_constraint + name
     created_at     = db.Column(db.DateTime,  nullable=False, server_default=db.func.now())
-    quoted_fee     = db.Column(db.Numeric(10, 2), nullable=False)  # Fixed: nullable=True->False, Numeric(8,2)->Numeric(10,2) per schema.sq1/Task5  # WARNING: routes/reservations.py:138 allows None
+    quoted_fee     = db.Column(db.Numeric(10, 2), nullable=False)  # Fixed: nullable=True->False, Numeric(8,2)->Numeric(10,2) per schema.sq1/Task5
 
     # Relationships
     customer = db.relationship("Customer", back_populates="reservations")

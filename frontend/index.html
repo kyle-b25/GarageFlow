@@ -322,6 +322,23 @@
       <div style="margin-top:20px; display:flex; justify-content:flex-end;">
         <button class="btn btn-primary" id="btn-entry-submit">✔ Finish Entry</button>
       </div>
+
+      <div id="entry-confirmation" style="display:none; margin-top:16px; padding:16px; background:var(--surface2); border:1px solid var(--success); border-radius:var(--radius);">
+        <div style="font-weight:600; color:var(--success); margin-bottom:12px; font-size:15px;">Ticket Created Successfully</div>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:6px 12px; font-size:14px;">
+          <span style="color:var(--text-muted);">Ticket ID</span>
+          <span id="conf-ticket-id" style="font-weight:600;"></span>
+          <span style="color:var(--text-muted);">License Plate</span>
+          <span id="conf-plate"></span>
+          <span style="color:var(--text-muted);">Assigned Floor</span>
+          <span id="conf-floor"></span>
+          <span style="color:var(--text-muted);">Entry Time</span>
+          <span id="conf-time"></span>
+          <span style="color:var(--text-muted);">Status</span>
+          <span id="conf-status"></span>
+        </div>
+        <button class="btn btn-secondary" id="btn-conf-dismiss" style="margin-top:14px; width:100%;" data-label="New Entry">New Entry</button>
+      </div>
     </div>
 
     <!-- ── Floor Overview ── -->
@@ -428,6 +445,45 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- ── Operator Dashboard ── -->
+    <div class="panel" id="panel-dashboard" style="grid-column: 1 / -1;">
+      <div class="panel-title">Operator Dashboard</div>
+
+      <div id="dash-login" style="margin-bottom:14px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr auto; gap:8px; align-items:end;">
+          <div class="field" style="margin-bottom:0">
+            <label for="dash-user">Username</label>
+            <input type="text" id="dash-user" placeholder="admin">
+          </div>
+          <div class="field" style="margin-bottom:0">
+            <label for="dash-pass">Password</label>
+            <input type="password" id="dash-pass" placeholder="password">
+          </div>
+          <button class="btn btn-primary" id="btn-dash-login" data-label="Login">Login</button>
+        </div>
+      </div>
+
+      <div id="dash-content" style="display:none;">
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px;">
+          <div class="zone-card"><div class="zone-card-title">Occupied</div><div id="dash-occupied" style="font-size:24px; font-weight:600;">—</div></div>
+          <div class="zone-card"><div class="zone-card-title">Available</div><div id="dash-available" style="font-size:24px; font-weight:600;">—</div></div>
+          <div class="zone-card"><div class="zone-card-title">Occupancy Rate</div><div id="dash-rate" style="font-size:24px; font-weight:600;">—</div></div>
+          <div class="zone-card"><div class="zone-card-title">Revenue (7d)</div><div id="dash-revenue" style="font-size:24px; font-weight:600;">—</div></div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="zone-card">
+            <div class="zone-card-title">Daily Entries (7d)</div>
+            <div id="dash-util" style="font-size:13px; color:var(--text-muted);"></div>
+          </div>
+          <div class="zone-card">
+            <div class="zone-card-title">Peak Hours (7d)</div>
+            <div id="dash-peak" style="font-size:13px; color:var(--text-muted);"></div>
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="btn-dash-refresh" data-label="Refresh" style="margin-top:12px;">Refresh</button>
+      </div>
     </div>
 
   </div><!-- /main-grid -->

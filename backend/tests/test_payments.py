@@ -17,8 +17,8 @@ import pytest
 from app import app, db
 from tests.conftest import auth_header as _auth
 from models import (
-    Garage, Floor, ParkingSpot, Vehicle, Ticket, Payment,
-    SpotTypeEnum, SpotStatusEnum, VehicleTypeEnum,
+    Garage, Floor, ParkingSpot, GateEvent, Vehicle, Ticket, Payment,
+    SpotTypeEnum, SpotStatusEnum, GateTypeEnum, GateStatusEnum, VehicleTypeEnum,
     TicketStatusEnum, PaymentMethodEnum, PaymentStatusEnum,
 )
 
@@ -27,7 +27,7 @@ from models import (
 def seed_data(client):
     """Seed a garage, floor, spot, vehicle, and closed ticket."""
     with app.app_context():
-        garage = Garage(name='Test Garage', total_capacity=10, number_of_floors=1)
+        garage = Garage(name='Test Garage', total_capacity=10, number_of_floors=1, operating_hours='24/7')  # Fixed: operating_hours NOT NULL
         db.session.add(garage)
         db.session.flush()
 
@@ -41,8 +41,13 @@ def seed_data(client):
         db.session.add(spot)
         db.session.flush()
 
-        vehicle = Vehicle(license_plate='TEST123', vehicle_type=VehicleTypeEnum.car)
+        vehicle = Vehicle(license_plate='TEST123', plate_state='NY', vehicle_type=VehicleTypeEnum.car)  # Fixed: plate_state NOT NULL
         db.session.add(vehicle)
+        db.session.flush()
+
+        # Fixed: entry_gate_id is NOT NULL — create a gate event
+        entry_gate = GateEvent(garage_id=garage.garage_id, gate_type=GateTypeEnum.entry, status=GateStatusEnum.open)
+        db.session.add(entry_gate)
         db.session.flush()
 
         entry_time = datetime.utcnow() - timedelta(hours=2)
@@ -53,6 +58,7 @@ def seed_data(client):
         ticket = Ticket(
             vehicle_id=vehicle.vehicle_id,
             spot_id=spot.spot_id,
+            entry_gate_id=entry_gate.gate_id,  # Fixed: entry_gate_id NOT NULL
             entry_timestamp=entry_time,
             exit_timestamp=exit_time,
             duration=duration,
