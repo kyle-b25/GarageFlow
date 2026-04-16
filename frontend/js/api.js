@@ -6,9 +6,26 @@
 const BASE_URL = ''; // relative — works when served by Flask
 
 // -------------------------------------------------------------
-//  Internal helper — centralised fetch wrapper.
+//  Internal helpers — centralised fetch wrappers.
 //  Handles JSON parsing and error codes.
 // -------------------------------------------------------------
+async function _authRequest(method, path, body = null, token = null) {
+  const options = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (token) options.headers['Authorization'] = `Bearer ${token}`;
+  if (body) options.body = JSON.stringify(body);
+  const response = await fetch(`${BASE_URL}${path}`, options);
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try { const err = await response.json(); message = err.error || err.message || message; } catch (_) {}
+    throw new Error(message);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
 async function _request(method, path, body = null) {
   const options = {
     method,
@@ -160,4 +177,32 @@ export async function getAllFloors() {
  */
 export async function getGarage() {
   return _request('GET', '/v1/garage');
+}
+
+
+// =============================================================
+//  AUTH + ANALYTICS  —  Dashboard endpoints
+// =============================================================
+
+export async function loginStaff(username, password) {
+  return _request('POST', '/v1/auth/login', { username, password });
+}
+
+export async function getOccupancy(token) {
+  return _authRequest('GET', '/v1/analytics/occupancy', null, token);
+}
+
+export async function getRevenue(token, from, to) {
+  const params = new URLSearchParams({ from, to });
+  return _authRequest('GET', `/v1/analytics/revenue?${params}`, null, token);
+}
+
+export async function getUtilization(token, from, to) {
+  const params = new URLSearchParams({ from, to });
+  return _authRequest('GET', `/v1/analytics/utilization?${params}`, null, token);
+}
+
+export async function getPeakHours(token, from, to) {
+  const params = new URLSearchParams({ from, to });
+  return _authRequest('GET', `/v1/analytics/peak-hours?${params}`, null, token);
 }

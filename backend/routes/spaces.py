@@ -151,16 +151,19 @@ def update_floor(floor_id):
             floor.floor_number = data['floorNumber']
         if 'totalSpots' in data:
             new_total = data['totalSpots']
+            # Fixed: query counts BEFORE modifying floor to avoid auto-flush
+            # triggering CHECK constraint (available_spots <= total_spots)
             occupied_count = ParkingSpot.query.filter_by(
                 floor_id=floor_id, status=SpotStatusEnum.occupied
             ).count()
             if new_total < occupied_count:
                 return jsonify({"error": "invalid_total_spots",
                                 "message": "totalSpots cannot be less than occupied spots"}), 400
-            floor.total_spots = new_total
             actual_available = ParkingSpot.query.filter_by(
                 floor_id=floor_id, status=SpotStatusEnum.available
             ).count()
+            # Set both atomically to satisfy CHECK constraint
+            floor.total_spots = new_total
             floor.available_spots = min(actual_available, new_total - occupied_count)
             garage = Garage.query.get(floor.garage_id)
             if garage:

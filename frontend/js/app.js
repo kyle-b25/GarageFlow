@@ -11,6 +11,11 @@ import {
   getAllFloors,
   getUpcomingReservations,
   getGarage,
+  loginStaff,
+  getOccupancy,
+  getRevenue,
+  getUtilization,
+  getPeakHours,
 } from './api.js';
 
 
@@ -72,7 +77,12 @@ async function handleEntryFinish() {
 
   try {
     const result = await postTicket(plate, driverClass);
-    alert(`✅ Ticket created!\nTicket ID: ${result.ticketId}\nAssigned Floor: ${floorLabel(result.assignedFloor)}\nEntry Time: ${new Date(result.entryTime).toLocaleString()}`);
+    document.getElementById('conf-ticket-id').textContent = result.ticketId;
+    document.getElementById('conf-plate').textContent = result.licensePlate || plate;
+    document.getElementById('conf-floor').textContent = floorLabel(result.assignedFloor);
+    document.getElementById('conf-time').textContent = new Date(result.entryTime).toLocaleString();
+    document.getElementById('conf-status').textContent = result.status;
+    document.getElementById('entry-confirmation').style.display = 'block';
     document.getElementById('entry-plate').value = '';
     document.getElementById('vehicle-type').value = '';
   } catch (err) {
@@ -274,6 +284,78 @@ function setDefaultArrival() {
 }
 
 // =============================================================
+//  OPERATOR DASHBOARD
+// =============================================================
+
+let dashToken = null;
+
+async function dashLogin() {
+  const user = document.getElementById('dash-user').value.trim();
+  const pass = document.getElementById('dash-pass').value.trim();
+  if (!user || !pass) { alert('Enter username and password.'); return; }
+  const btn = document.getElementById('btn-dash-login');
+  setLoading(btn, true);
+  try {
+    const res = await loginStaff(user, pass);
+    dashToken = res.token;
+    document.getElementById('dash-login').style.display = 'none';
+    document.getElementById('dash-content').style.display = 'block';
+    await refreshDashboard();
+  } catch (err) {
+    alert('Login failed: ' + err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function refreshDashboard() {
+  if (!dashToken) return;
+  const now = new Date();
+  const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+  const from = weekAgo.toISOString();
+  const to = now.toISOString();
+
+  try {
+    const occ = await getOccupancy(dashToken);
+    document.getElementById('dash-occupied').textContent = occ.occupiedSpots;
+    document.getElementById('dash-available').textContent = occ.availableSpots;
+    document.getElementById('dash-rate').textContent = Math.round(occ.occupancyRate * 100) + '%';
+  } catch (_) {
+    document.getElementById('dash-occupied').textContent = 'Error';
+  }
+
+  try {
+    const rev = await getRevenue(dashToken, from, to);
+    document.getElementById('dash-revenue').textContent = '$' + rev.totalRevenue.toFixed(2);
+  } catch (_) {
+    document.getElementById('dash-revenue').textContent = 'Error';
+  }
+
+  try {
+    const util = await getUtilization(dashToken, from, to);
+    const utilEl = document.getElementById('dash-util');
+    utilEl.innerHTML = util.days.map(d =>
+      `<div style="display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px solid var(--border);">` +
+      `<span>${d.date}</span><span>${d.entries} in / ${d.exits} out</span></div>`
+    ).join('');
+  } catch (_) {
+    document.getElementById('dash-util').textContent = 'Could not load utilization data.';
+  }
+
+  try {
+    const peak = await getPeakHours(dashToken, from, to);
+    const peakEl = document.getElementById('dash-peak');
+    const sorted = peak.hours.filter(h => h.count > 0).sort((a, b) => b.count - a.count).slice(0, 8);
+    peakEl.innerHTML = sorted.map(h =>
+      `<div style="display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px solid var(--border);">` +
+      `<span>${String(h.hour).padStart(2,'0')}:00</span><span>${h.count} entries</span></div>`
+    ).join('') || 'No data';
+  } catch (_) {
+    document.getElementById('dash-peak').textContent = 'Could not load peak hours.';
+  }
+}
+
+// =============================================================
 //  WIRE UP  — runs once DOM is ready
 // =============================================================
 
@@ -303,5 +385,12 @@ document.addEventListener('DOMContentLoaded', () => {
 	
   document.getElementById('btn-upcoming')
     .addEventListener('click', showUpcoming);
+
+  document.getElementById('btn-conf-dismiss').addEventListener('click', () => {
+    document.getElementById('entry-confirmation').style.display = 'none';
+  });
+
+  document.getElementById('btn-dash-login').addEventListener('click', dashLogin);
+  document.getElementById('btn-dash-refresh').addEventListener('click', refreshDashboard);
 
 });

@@ -122,7 +122,7 @@ def seeded_db(db_session):
 
     Returns a dict with all entity IDs.
     """
-    garage = Garage(name="Test Garage", total_capacity=5, number_of_floors=1)
+    garage = Garage(name="Test Garage", total_capacity=5, number_of_floors=1, operating_hours='24/7')  # Fixed: operating_hours NOT NULL
     db_session.add(garage)
     db_session.flush()
 
@@ -270,6 +270,7 @@ class TestForeignKeyConstraints:
         db_session.add(
             Vehicle(
                 license_plate="BAD-FK-01",
+                plate_state="NY",  # Fixed: plate_state NOT NULL
                 vehicle_type=VehicleTypeEnum.car,
                 customer_id=9999,
             )
@@ -284,6 +285,7 @@ class TestForeignKeyConstraints:
             Ticket(
                 spot_id=9999,
                 vehicle_id=seeded_db["vehicle_id"],
+                entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
                 status=TicketStatusEnum.active,
             )
         )
@@ -297,6 +299,7 @@ class TestForeignKeyConstraints:
             Ticket(
                 spot_id=seeded_db["spot_avail_id"],
                 vehicle_id=9999,
+                entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
                 status=TicketStatusEnum.active,
             )
         )
@@ -337,7 +340,10 @@ class TestForeignKeyConstraints:
         db_session.add(
             Reservation(
                 customer_id=9999,
+                vehicle_id=9999,  # Fixed: vehicle_id NOT NULL
                 start_datetime=datetime.utcnow(),
+                end_datetime=datetime.utcnow() + timedelta(hours=2),  # Fixed: end_datetime NOT NULL
+                quoted_fee=Decimal("0.00"),  # Fixed: quoted_fee NOT NULL
                 status=ReservationStatusEnum.confirmed,
             )
         )
@@ -352,6 +358,8 @@ class TestForeignKeyConstraints:
                 customer_id=seeded_db["customer_id"],
                 vehicle_id=9999,
                 start_datetime=datetime.utcnow(),
+                end_datetime=datetime.utcnow() + timedelta(hours=2),  # Fixed: end_datetime NOT NULL
+                quoted_fee=Decimal("0.00"),  # Fixed: quoted_fee NOT NULL
                 status=ReservationStatusEnum.confirmed,
             )
         )
@@ -436,15 +444,11 @@ class TestEnumEnforcement:
     """Verify that the database rejects invalid ENUM values.
 
     Raw SQL is used to bypass Python enum validation so the test targets
-    the actual DB constraint.  On MySQL this would be a native ENUM column;
-    on SQLite, SQLAlchemy 2.0 maps Enum to VARCHAR **without** CHECK
-    constraints (create_constraint defaults to False).  All tests are
-    therefore marked @enum_no_check on SQLite — they document the gap and
-    will pass when run against MySQL or if create_constraint=True is added
-    to models.py.
+    the actual DB constraint.  All db.Enum() columns in models.py now have
+    create_constraint=True, so SQLite emits CHECK constraints that enforce
+    valid enum values.
     """
 
-    @enum_no_check
     def test_spot_type_rejects_invalid(self, seeded_db):
         """parking_spot.spot_type = 'vip' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -458,7 +462,6 @@ class TestEnumEnforcement:
             db.session.flush()
         db.session.rollback()
 
-    @enum_no_check
     def test_spot_status_rejects_invalid(self, seeded_db):
         """parking_spot.status = 'dirty' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -472,7 +475,6 @@ class TestEnumEnforcement:
             db.session.flush()
         db.session.rollback()
 
-    @enum_no_check
     def test_gate_type_rejects_invalid(self, seeded_db):
         """gate_event.gate_type = 'both' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -486,7 +488,6 @@ class TestEnumEnforcement:
             db.session.flush()
         db.session.rollback()
 
-    @enum_no_check
     def test_gate_status_rejects_invalid(self, seeded_db):
         """gate_event.status = 'locked' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -500,7 +501,6 @@ class TestEnumEnforcement:
             db.session.flush()
         db.session.rollback()
 
-    @enum_no_check
     def test_account_status_rejects_invalid(self, db_session):
         """customer.account_status = 'banned' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -513,7 +513,6 @@ class TestEnumEnforcement:
             db_session.flush()
         db_session.rollback()
 
-    @enum_no_check
     def test_vehicle_type_rejects_invalid(self, db_session):
         """vehicle.vehicle_type = 'bicycle' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -526,7 +525,6 @@ class TestEnumEnforcement:
             db_session.flush()
         db_session.rollback()
 
-    @enum_no_check
     def test_staff_role_rejects_invalid(self, db_session):
         """staff.role = 'manager' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -539,7 +537,6 @@ class TestEnumEnforcement:
             db_session.flush()
         db_session.rollback()
 
-    @enum_no_check
     def test_ticket_status_rejects_invalid(self, seeded_db):
         """ticket.status = 'expired' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -556,7 +553,6 @@ class TestEnumEnforcement:
             db.session.flush()
         db.session.rollback()
 
-    @enum_no_check
     def test_payment_method_rejects_invalid(self, seeded_db):
         """payment.payment_method = 'crypto' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -570,7 +566,6 @@ class TestEnumEnforcement:
             db.session.flush()
         db.session.rollback()
 
-    @enum_no_check
     def test_payment_status_rejects_invalid(self, seeded_db):
         """payment.payment_status = 'disputed' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -584,7 +579,6 @@ class TestEnumEnforcement:
             db.session.flush()
         db.session.rollback()
 
-    @enum_no_check
     def test_reservation_status_rejects_invalid(self, db_session):
         """reservation.status = 'pending' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -597,7 +591,6 @@ class TestEnumEnforcement:
             db_session.flush()
         db_session.rollback()
 
-    @enum_no_check
     def test_occupancy_change_rejects_invalid(self, seeded_db):
         """occupancy_log.change_type = 'partial' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -611,7 +604,6 @@ class TestEnumEnforcement:
             db.session.flush()
         db.session.rollback()
 
-    @enum_no_check
     def test_pricing_model_rejects_invalid(self, db_session):
         """pricing_rule.pricing_model = 'dynamic' must be rejected by the DB."""
         with pytest.raises((IntegrityError, StatementError)):
@@ -631,34 +623,26 @@ class TestEnumEnforcement:
 
 
 class TestCheckConstraints:
-    """CHECK constraints from NoneCodeDeliverables/schema.sq1 that are NOT
-    defined in backend/models.py.
-
-    When tests run against SQLite via db.create_all() (from models.py),
-    these constraints do not exist.  All tests are marked @schema_gap
-    (xfail) to document the gap.  They will start passing if/when
-    CheckConstraint objects are added to models.py.
+    """CHECK constraints from NoneCodeDeliverables/schema.sq1, now defined
+    in models.py via CheckConstraint objects in __table_args__.
     """
 
-    @schema_gap
     def test_garage_capacity_must_be_positive(self, db_session):
-        """schema.sq1: CHECK (total_capacity > 0).  models.py: absent."""
-        db_session.add(Garage(name="Bad", total_capacity=-1, number_of_floors=1))
+        """schema.sq1: CHECK (total_capacity > 0)."""
+        db_session.add(Garage(name="Bad", total_capacity=-1, number_of_floors=1, operating_hours='24/7'))  # Fixed: operating_hours NOT NULL
         with pytest.raises(IntegrityError):
             db_session.flush()
         db_session.rollback()
 
-    @schema_gap
     def test_garage_floors_must_be_positive(self, db_session):
-        """schema.sq1: CHECK (number_of_floors > 0).  models.py: absent."""
-        db_session.add(Garage(name="Bad", total_capacity=10, number_of_floors=0))
+        """schema.sq1: CHECK (number_of_floors > 0)."""
+        db_session.add(Garage(name="Bad", total_capacity=10, number_of_floors=0, operating_hours='24/7'))  # Fixed: operating_hours NOT NULL
         with pytest.raises(IntegrityError):
             db_session.flush()
         db_session.rollback()
 
-    @schema_gap
     def test_floor_number_non_negative(self, seeded_db):
-        """schema.sq1: CHECK (floor_number >= 0).  models.py: absent."""
+        """schema.sq1: CHECK (floor_number >= 0)."""
         db.session.add(
             Floor(
                 garage_id=seeded_db["garage_id"],
@@ -671,9 +655,8 @@ class TestCheckConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
     def test_floor_total_spots_positive(self, seeded_db):
-        """schema.sq1: CHECK (total_spots > 0).  models.py: absent."""
+        """schema.sq1: CHECK (total_spots > 0)."""
         db.session.add(
             Floor(
                 garage_id=seeded_db["garage_id"],
@@ -686,9 +669,8 @@ class TestCheckConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
     def test_floor_available_spots_non_negative(self, seeded_db):
-        """schema.sq1: CHECK (available_spots >= 0).  models.py: absent."""
+        """schema.sq1: CHECK (available_spots >= 0)."""
         db.session.add(
             Floor(
                 garage_id=seeded_db["garage_id"],
@@ -701,9 +683,8 @@ class TestCheckConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
     def test_floor_available_not_exceed_total(self, seeded_db):
-        """schema.sq1: CHECK (available_spots <= total_spots).  models.py: absent."""
+        """schema.sq1: CHECK (available_spots <= total_spots)."""
         db.session.add(
             Floor(
                 garage_id=seeded_db["garage_id"],
@@ -716,15 +697,15 @@ class TestCheckConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
     def test_ticket_exit_not_before_entry(self, seeded_db):
         """schema.sq1: CHECK (exit_timestamp IS NULL OR exit_timestamp >= entry_timestamp).
-        models.py: absent."""
+      """
         now = datetime.utcnow()
         db.session.add(
             Ticket(
                 spot_id=seeded_db["spot_avail_id"],
                 vehicle_id=seeded_db["vehicle_id"],
+                entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
                 entry_timestamp=now,
                 exit_timestamp=now - timedelta(hours=2),
                 status=TicketStatusEnum.closed,
@@ -734,13 +715,13 @@ class TestCheckConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
     def test_ticket_duration_non_negative(self, seeded_db):
-        """schema.sq1: CHECK (duration IS NULL OR duration >= 0).  models.py: absent."""
+        """schema.sq1: CHECK (duration IS NULL OR duration >= 0)."""
         db.session.add(
             Ticket(
                 spot_id=seeded_db["spot_avail_id"],
                 vehicle_id=seeded_db["vehicle_id"],
+                entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
                 status=TicketStatusEnum.active,
                 duration=-10,
             )
@@ -749,13 +730,13 @@ class TestCheckConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
     def test_ticket_fee_non_negative(self, seeded_db):
-        """schema.sq1: CHECK (total_fee IS NULL OR total_fee >= 0).  models.py: absent."""
+        """schema.sq1: CHECK (total_fee IS NULL OR total_fee >= 0)."""
         db.session.add(
             Ticket(
                 spot_id=seeded_db["spot_avail_id"],
                 vehicle_id=seeded_db["vehicle_id"],
+                entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
                 status=TicketStatusEnum.active,
                 total_fee=Decimal("-5.00"),
             )
@@ -764,9 +745,8 @@ class TestCheckConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
     def test_reservation_end_after_start(self, seeded_db):
-        """schema.sq1: CHECK (end_datetime > start_datetime).  models.py: absent."""
+        """schema.sq1: CHECK (end_datetime > start_datetime)."""
         now = datetime.utcnow()
         db.session.add(
             Reservation(
@@ -774,6 +754,7 @@ class TestCheckConstraints:
                 vehicle_id=seeded_db["vehicle_id"],
                 start_datetime=now,
                 end_datetime=now - timedelta(hours=1),
+                quoted_fee=Decimal("0.00"),  # Fixed: quoted_fee NOT NULL
                 status=ReservationStatusEnum.confirmed,
             )
         )
@@ -781,9 +762,8 @@ class TestCheckConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
     def test_reservation_fee_non_negative(self, seeded_db):
-        """schema.sq1: CHECK (quoted_fee >= 0).  models.py: absent."""
+        """schema.sq1: CHECK (quoted_fee >= 0)."""
         db.session.add(
             Reservation(
                 customer_id=seeded_db["customer_id"],
@@ -798,9 +778,8 @@ class TestCheckConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
     def test_payment_amount_non_negative(self, seeded_db):
-        """schema.sq1: CHECK (amount_charged >= 0).  models.py: absent."""
+        """schema.sq1: CHECK (amount_charged >= 0)."""
         db.session.add(
             Payment(
                 ticket_id=seeded_db["ticket_id"],
@@ -825,8 +804,8 @@ class TestUniqueConstraints:
 
     def test_customer_email_unique(self, db_session):
         """Duplicate customer.email must be rejected (unique=True in models.py)."""
-        c1 = Customer(email="dupe@test.com", account_status=AccountStatusEnum.active)
-        c2 = Customer(email="dupe@test.com", account_status=AccountStatusEnum.active)
+        c1 = Customer(name="A", email="dupe@test.com", phone_number="555-0001", account_status=AccountStatusEnum.active)  # Fixed: name, phone_number NOT NULL
+        c2 = Customer(name="B", email="dupe@test.com", phone_number="555-0002", account_status=AccountStatusEnum.active)  # Fixed: name, phone_number NOT NULL
         db_session.add(c1)
         db_session.flush()
         db_session.add(c2)
@@ -834,18 +813,16 @@ class TestUniqueConstraints:
             db_session.flush()
         db_session.rollback()
 
-    @schema_gap
     def test_customer_phone_unique(self, db_session):
-        """schema.sq1: UNIQUE (phone_number).  models.py: no unique constraint.
-
-        GAP: Two customers with the same phone_number can be inserted.
-        """
+        """UNIQUE (phone_number) — enforced via unique=True in models.py."""
         c1 = Customer(
+            name="A",
             email="a@test.com",
             phone_number="555-DUPE",
             account_status=AccountStatusEnum.active,
         )
         c2 = Customer(
+            name="B",
             email="b@test.com",
             phone_number="555-DUPE",
             account_status=AccountStatusEnum.active,
@@ -857,8 +834,8 @@ class TestUniqueConstraints:
 
     def test_vehicle_plate_unique(self, db_session):
         """Duplicate vehicle.license_plate must be rejected."""
-        v1 = Vehicle(license_plate="DUPE-01", vehicle_type=VehicleTypeEnum.car)
-        v2 = Vehicle(license_plate="DUPE-01", vehicle_type=VehicleTypeEnum.truck)
+        v1 = Vehicle(license_plate="DUPE-01", plate_state="NY", vehicle_type=VehicleTypeEnum.car)  # Fixed: plate_state NOT NULL
+        v2 = Vehicle(license_plate="DUPE-01", plate_state="CA", vehicle_type=VehicleTypeEnum.truck)  # Fixed: plate_state NOT NULL
         db_session.add(v1)
         db_session.flush()
         db_session.add(v2)
@@ -909,12 +886,13 @@ class TestUniqueConstraints:
     def test_payment_stripe_intent_unique(self, seeded_db):
         """Duplicate stripe_payment_intent_id must be rejected."""
         # Need a second ticket for the second payment (ticket_id is also unique)
-        v2 = Vehicle(license_plate="UNIQ-02", vehicle_type=VehicleTypeEnum.car)
+        v2 = Vehicle(license_plate="UNIQ-02", plate_state="NY", vehicle_type=VehicleTypeEnum.car)  # Fixed: plate_state NOT NULL
         db.session.add(v2)
         db.session.flush()
         t2 = Ticket(
             spot_id=seeded_db["spot_avail_id"],
             vehicle_id=v2.vehicle_id,
+            entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
             status=TicketStatusEnum.active,
         )
         db.session.add(t2)
@@ -944,8 +922,8 @@ class TestUniqueConstraints:
 
     def test_pricing_rule_name_unique(self, db_session):
         """Duplicate pricing_rule.rate_name must be rejected."""
-        r1 = PricingRule(rate_name="standard", pricing_model=PricingModelEnum.hourly)
-        r2 = PricingRule(rate_name="standard", pricing_model=PricingModelEnum.flat)
+        r1 = PricingRule(rate_name="standard", applicable_hours="24/7", pricing_model=PricingModelEnum.hourly, description="Standard rate", program="flat_rate")  # Fixed: NOT NULL fields
+        r2 = PricingRule(rate_name="standard", applicable_hours="24/7", pricing_model=PricingModelEnum.flat, description="Standard rate", program="flat_rate")  # Fixed: NOT NULL fields
         db_session.add(r1)
         db_session.flush()
         db_session.add(r2)
@@ -958,12 +936,13 @@ class TestUniqueConstraints:
 
         SQL standard: NULL != NULL for UNIQUE constraints.
         """
-        v2 = Vehicle(license_plate="NULL-02", vehicle_type=VehicleTypeEnum.car)
+        v2 = Vehicle(license_plate="NULL-02", plate_state="NY", vehicle_type=VehicleTypeEnum.car)  # Fixed: plate_state NOT NULL
         db.session.add(v2)
         db.session.flush()
         t2 = Ticket(
             spot_id=seeded_db["spot_avail_id"],
             vehicle_id=v2.vehicle_id,
+            entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
             status=TicketStatusEnum.active,
         )
         db.session.add(t2)
@@ -988,12 +967,8 @@ class TestUniqueConstraints:
 
     # --- Composite UNIQUE gaps ---
 
-    @schema_gap
-    def test_floor_composite_unique_gap(self, seeded_db):
-        """schema.sq1: UNIQUE (garage_id, floor_number).  models.py: absent.
-
-        GAP: Two floors with the same garage_id + floor_number can be inserted.
-        """
+    def test_floor_composite_unique(self, seeded_db):
+        """UNIQUE (garage_id, floor_number) — enforced via UniqueConstraint in models.py."""
         f1 = Floor(
             garage_id=seeded_db["garage_id"],
             floor_number=1,
@@ -1005,12 +980,8 @@ class TestUniqueConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
-    def test_gate_composite_unique_gap(self, seeded_db):
-        """schema.sq1: UNIQUE (garage_id, gate_type).  models.py: absent.
-
-        GAP: Two entry gates for the same garage can be inserted.
-        """
+    def test_gate_composite_unique(self, seeded_db):
+        """UNIQUE (garage_id, gate_type) — enforced via UniqueConstraint in models.py."""
         g2 = GateEvent(
             garage_id=seeded_db["garage_id"],
             gate_type=GateTypeEnum.entry,
@@ -1021,13 +992,8 @@ class TestUniqueConstraints:
             db.session.flush()
         db.session.rollback()
 
-    @schema_gap
-    def test_spot_location_composite_unique_gap(self, seeded_db):
-        """schema.sq1: UNIQUE (floor_id, location_reference).  models.py: absent.
-
-        GAP: Two spots on the same floor with identical location_reference
-        can be inserted.
-        """
+    def test_spot_location_composite_unique(self, seeded_db):
+        """UNIQUE (floor_id, location_reference) — enforced via UniqueConstraint in models.py."""
         s1 = ParkingSpot(
             floor_id=seeded_db["floor_id"],
             spot_type=SpotTypeEnum.standard,
@@ -1290,6 +1256,7 @@ class TestDataIntegrityEdgeCases:
         """
         v = Vehicle(
             license_plate="WALKIN-01",
+            plate_state="N/A",  # Fixed: plate_state NOT NULL
             vehicle_type=VehicleTypeEnum.car,
             customer_id=None,
         )
@@ -1308,13 +1275,12 @@ class TestDataIntegrityEdgeCases:
         assert ticket.duration is None
         assert ticket.total_fee is None
 
-    def test_ticket_null_entry_gate_valid(self, seeded_db):
-        """Ticket with entry_gate_id=None is valid (nullable=True in models.py).
+    def test_ticket_null_entry_gate_rejected(self, seeded_db):
+        """Ticket with entry_gate_id=None must be rejected (nullable=False per schema.sq1).
 
-        Note: schema.sq1 says NOT NULL, but models.py allows NULL.
-        This documents the ORM behaviour.
+        Fixed: entry_gate_id is now NOT NULL to match schema.sq1/Task5.
         """
-        v = Vehicle(license_plate="NOGATE-01", vehicle_type=VehicleTypeEnum.car)
+        v = Vehicle(license_plate="NOGATE-01", plate_state="N/A", vehicle_type=VehicleTypeEnum.car)  # Fixed: plate_state NOT NULL
         db.session.add(v)
         db.session.flush()
         t = Ticket(
@@ -1324,24 +1290,27 @@ class TestDataIntegrityEdgeCases:
             status=TicketStatusEnum.active,
         )
         db.session.add(t)
-        db.session.flush()
-        assert t.ticket_id is not None
-        assert t.entry_gate_id is None
+        with pytest.raises(IntegrityError):
+            db.session.flush()
+        db.session.rollback()
 
-    def test_reservation_null_customer_and_vehicle(self, db_session):
-        """Reservation with both customer_id and vehicle_id as NULL is valid.
+    def test_reservation_null_customer_rejected(self, db_session):
+        """Reservation with customer_id=None must be rejected (nullable=False per schema.sq1/Task5).
 
-        models.py: both are nullable=True.
+        Fixed: customer_id and vehicle_id are now NOT NULL to match schema.sq1/Task5.
         """
         r = Reservation(
             customer_id=None,
             vehicle_id=None,
             start_datetime=datetime.utcnow(),
+            end_datetime=datetime.utcnow() + timedelta(hours=2),
+            quoted_fee=Decimal("0.00"),
             status=ReservationStatusEnum.confirmed,
         )
         db_session.add(r)
-        db_session.flush()
-        assert r.reservation_id is not None
+        with pytest.raises(IntegrityError):
+            db_session.flush()
+        db_session.rollback()
 
     def test_system_event_null_staff_id(self, db_session):
         """SystemEvent with staff_id=None (system-generated) is valid."""
@@ -1391,6 +1360,7 @@ class TestDataIntegrityEdgeCases:
             Ticket(
                 spot_id=None,
                 vehicle_id=seeded_db["vehicle_id"],
+                entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
                 status=TicketStatusEnum.active,
             )
         )
@@ -1404,6 +1374,7 @@ class TestDataIntegrityEdgeCases:
             Ticket(
                 spot_id=seeded_db["spot_avail_id"],
                 vehicle_id=None,
+                entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
                 status=TicketStatusEnum.active,
             )
         )
@@ -1423,12 +1394,13 @@ class TestDataIntegrityEdgeCases:
 
     def test_decimal_precision_fee(self, seeded_db):
         """Numeric(8,2) stores Decimal values with correct precision."""
-        v = Vehicle(license_plate="PREC-01", vehicle_type=VehicleTypeEnum.car)
+        v = Vehicle(license_plate="PREC-01", plate_state="NY", vehicle_type=VehicleTypeEnum.car)  # Fixed: plate_state NOT NULL
         db.session.add(v)
         db.session.flush()
         t = Ticket(
             spot_id=seeded_db["spot_avail_id"],
             vehicle_id=v.vehicle_id,
+            entry_gate_id=seeded_db["entry_gate_id"],  # Fixed: entry_gate_id NOT NULL
             status=TicketStatusEnum.closed,
             total_fee=Decimal("123456.78"),
         )
