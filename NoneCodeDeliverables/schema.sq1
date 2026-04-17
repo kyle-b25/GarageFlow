@@ -1,8 +1,18 @@
--- GarageFlow Task 6: SQL Schema
+-- ===========================================================================
+-- GarageFlow SQL Schema — HISTORICAL REFERENCE
+--
+-- STATUS: This file is documentation only. The runtime schema is defined
+-- by backend/models.py and managed by Alembic migrations. Do NOT use this
+-- file to create or alter production tables.
+--
+-- Last synced with models.py: 2026-04-16
+-- ===========================================================================
 -- MySQL / MariaDB style
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS login_attempt;
+DROP TABLE IF EXISTS session_token;
 DROP TABLE IF EXISTS pricing_rule;
 DROP TABLE IF EXISTS system_event;
 DROP TABLE IF EXISTS occupancy_log;
@@ -53,7 +63,7 @@ CREATE TABLE floor (
 CREATE TABLE parking_spot (
     spot_id INT AUTO_INCREMENT PRIMARY KEY,
     floor_id INT NOT NULL,
-    spot_type ENUM('standard', 'handicap', 'staff') NOT NULL,
+    spot_type ENUM('standard', 'accessibility', 'staff', 'eco') NOT NULL,
     status ENUM('available', 'occupied', 'out_of_order') NOT NULL DEFAULT 'available',
     location_reference VARCHAR(50) NULL,
     CONSTRAINT fk_parking_spot_floor
@@ -81,7 +91,7 @@ CREATE TABLE gate_event (
 CREATE TABLE customer (
     customer_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
-    email VARCHAR(255) NOT NULL,
+    email VARCHAR(120) NOT NULL,
     phone_number VARCHAR(25) NOT NULL,
     date_created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     account_status ENUM('active', 'suspended', 'deleted') NOT NULL DEFAULT 'active',
@@ -108,7 +118,22 @@ CREATE TABLE staff (
     role ENUM('admin', 'attendant') NOT NULL,
     username VARCHAR(50) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_super_admin BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT uq_staff_username UNIQUE (username)
+) ENGINE=InnoDB;
+
+CREATE TABLE session_token (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    staff_id INT NOT NULL,
+    token VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT uq_session_token UNIQUE (token),
+    CONSTRAINT fk_session_staff
+        FOREIGN KEY (staff_id) REFERENCES staff(operator_id)
+        ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- =========================
@@ -125,6 +150,7 @@ CREATE TABLE ticket (
     status ENUM('active', 'closed', 'lost', 'voided') NOT NULL DEFAULT 'active',
     duration INT NULL,
     total_fee DECIMAL(10,2) NULL,
+    phone VARCHAR(20) NULL,
     CONSTRAINT fk_ticket_entry_gate
         FOREIGN KEY (entry_gate_id) REFERENCES gate_event(gate_id)
         ON UPDATE CASCADE
@@ -156,6 +182,9 @@ CREATE TABLE payment (
     payment_method ENUM('cash', 'card', 'mobile') NOT NULL,
     payment_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     payment_status ENUM('paid', 'pending', 'failed', 'refunded') NOT NULL DEFAULT 'pending',
+    stripe_payment_intent_id VARCHAR(100) NULL,
+    CONSTRAINT uq_payment_ticket UNIQUE (ticket_id),
+    CONSTRAINT uq_payment_stripe UNIQUE (stripe_payment_intent_id),
     CONSTRAINT fk_payment_ticket
         FOREIGN KEY (ticket_id) REFERENCES ticket(ticket_id)
         ON UPDATE CASCADE
@@ -167,6 +196,9 @@ CREATE TABLE reservation (
     reservation_id INT AUTO_INCREMENT PRIMARY KEY,
     customer_id INT NOT NULL,
     vehicle_id INT NOT NULL,
+    phone VARCHAR(20) NULL,
+    driver_class VARCHAR(20) NULL,
+    floor_number INT NULL,
     start_datetime TIMESTAMP NOT NULL,
     end_datetime TIMESTAMP NOT NULL,
     status ENUM('confirmed', 'cancelled', 'fulfilled', 'expired') NOT NULL DEFAULT 'confirmed',
@@ -200,8 +232,12 @@ CREATE TABLE occupancy_log (
 
 CREATE TABLE system_event (
     event_id INT AUTO_INCREMENT PRIMARY KEY,
+    staff_id INT NULL,
     source VARCHAR(100) NOT NULL,
-    description TEXT NOT NULL
+    description TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_system_event_staff
+        FOREIGN KEY (staff_id) REFERENCES staff(operator_id)
 ) ENGINE=InnoDB;
 
 -- =========================
@@ -213,7 +249,17 @@ CREATE TABLE pricing_rule (
     applicable_hours VARCHAR(100) NOT NULL,
     pricing_model ENUM('flat', 'hourly', 'special') NOT NULL,
     description TEXT NOT NULL,
-    program VARCHAR(255) NOT NULL
+    program VARCHAR(255) NOT NULL,
+    CONSTRAINT uq_pricing_rate_name UNIQUE (rate_name)
+) ENGINE=InnoDB;
+
+-- =========================
+-- Security
+-- =========================
+CREATE TABLE login_attempt (
+    ip_address VARCHAR(45) PRIMARY KEY,
+    fail_count INT NOT NULL DEFAULT 0,
+    window_start TIMESTAMP NOT NULL
 ) ENGINE=InnoDB;
 
 -- =========================
@@ -229,3 +275,4 @@ CREATE INDEX idx_ticket_exit_gate_id ON ticket (exit_gate_id);
 CREATE INDEX idx_reservation_customer_id ON reservation (customer_id);
 CREATE INDEX idx_reservation_vehicle_id ON reservation (vehicle_id);
 CREATE INDEX idx_occupancy_log_spot_id ON occupancy_log (spot_id);
+CREATE INDEX idx_session_staff_id ON session_token (staff_id);

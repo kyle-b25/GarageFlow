@@ -90,8 +90,7 @@ def require_role(role_name):
 
     Supported role_name values:
       "admin"       — requires StaffRoleEnum.admin
-      "super_admin" — requires admin role AND username == 'admin' (placeholder
-                      until a real super-admin flag is added to the Staff model)
+      "super_admin" — requires admin role AND is_super_admin flag set on Staff
     """
     def decorator(f):
         @wraps(f)
@@ -101,7 +100,7 @@ def require_role(role_name):
             if not user:
                 return jsonify({'error': 'unauthorized', 'message': 'Login required'}), 401
             if role_name == 'super_admin':
-                if user.role != StaffRoleEnum.admin or user.username != 'admin':
+                if user.role != StaffRoleEnum.admin or not user.is_super_admin:
                     return jsonify({'error': 'forbidden'}), 403
             elif role_name == 'admin':
                 if user.role != StaffRoleEnum.admin:

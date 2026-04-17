@@ -37,6 +37,7 @@ def create_staff_token(role='admin'):
         username=f'test_{role}_{secrets.token_hex(4)}',
         password_hash=pw_hash,
         role=StaffRoleEnum[role],
+        is_super_admin=(role == 'admin'),
     )
     db.session.add(staff)
     db.session.flush()

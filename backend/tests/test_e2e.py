@@ -45,7 +45,7 @@ def e2e_client():
 
         # Create admin staff + token
         pw_hash = bcrypt.hashpw(b'admin', bcrypt.gensalt()).decode()
-        staff = Staff(name='Admin', username='admin', password_hash=pw_hash, role=StaffRoleEnum.admin)
+        staff = Staff(name='Admin', username='admin', password_hash=pw_hash, role=StaffRoleEnum.admin, is_super_admin=True)
         db.session.add(staff)
         db.session.flush()
 

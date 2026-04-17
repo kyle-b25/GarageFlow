@@ -32,6 +32,7 @@ def admin_user(client):
             username='admin',
             password_hash=pw_hash,
             role=StaffRoleEnum.admin,
+            is_super_admin=True,
         )
         db.session.add(staff)
         db.session.commit()
@@ -107,9 +108,11 @@ class TestLogin:
         assert resp.get_json()['error'] == 'invalid_credentials'
 
     def test_rate_limiting(self, client, admin_user):
-        # Clear any prior state
-        from routes.auth import _failed_attempts
-        _failed_attempts.clear()
+        # Clear any prior DB state
+        from app import db
+        from models import LoginAttempt
+        LoginAttempt.query.delete()
+        db.session.commit()
 
         for _ in range(5):
             _login(client, 'admin', 'wrongpass')
@@ -119,7 +122,8 @@ class TestLogin:
         assert resp.get_json()['error'] == 'rate_limited'
 
         # Clean up
-        _failed_attempts.clear()
+        LoginAttempt.query.delete()
+        db.session.commit()
 
 
 # ======================================================================
