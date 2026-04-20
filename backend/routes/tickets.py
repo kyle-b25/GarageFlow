@@ -265,7 +265,19 @@ def put_ticket_exit(ticket_id):
     if vehicle.license_plate.lower() != license_plate.lower():
         return jsonify({'error': 'plate_mismatch', 'message': 'License plate does not match this ticket'}), 409
 
-    # Step 5 — Stamp exit + calculate duration/fee
+    # Step 5 — Resolve exit gate
+    from models import GateEvent, GateTypeEnum, GateStatusEnum, Floor as FloorModel, ParkingSpot
+    spot = ParkingSpot.query.get(ticket.spot_id)
+    floor = FloorModel.query.get(spot.floor_id) if spot else None
+    if floor:
+        exit_gate = GateEvent.query.filter_by(garage_id=floor.garage_id, gate_type=GateTypeEnum.exit).first()
+        if not exit_gate:
+            exit_gate = GateEvent(garage_id=floor.garage_id, gate_type=GateTypeEnum.exit, status=GateStatusEnum.open)
+            db.session.add(exit_gate)
+            db.session.flush()
+        ticket.exit_gate_id = exit_gate.gate_id
+
+    # Step 6 — Stamp exit + calculate duration/fee
     exit_ts = datetime.utcnow()
     ticket.exit_timestamp = exit_ts
     ticket.duration = calculate_duration(ticket.entry_timestamp, exit_ts)
@@ -383,3 +395,93 @@ def delete_ticket(ticket_id):
         return jsonify({'error': 'server_error', 'message': 'Failed to delete ticket'}), 500
 
     return '', 204
+
+
+# ------------------------------------------------------------------
+#  POST /v1/tickets/<id>/override — SR-12 operator override
+# ------------------------------------------------------------------
+
+@tickets_bp.route('/<int:ticket_id>/override', methods=['POST'])
+@require_role('admin')
+def override_ticket(ticket_id):
+    """Force-close, void, or correct spot on a ticket with audit trail."""
+    from app import db
+    from flask import g
+    from models import (
+        Ticket, TicketStatusEnum, ParkingSpot, SpotStatusEnum,
+        SystemEvent,
+    )
+
+    ticket = Ticket.query.get(ticket_id)
+    if not ticket:
+        return jsonify({'error': 'ticket_not_found', 'message': 'No ticket found with that ID'}), 404
+
+    data = request.get_json(silent=True) or {}
+    action = data.get('action')
+    reason = data.get('reason', '')
+
+    if action not in ('force_close', 'void', 'correct_spot'):
+        return jsonify({
+            'error': 'invalid_action',
+            'message': 'action must be force_close, void, or correct_spot',
+        }), 400
+
+    try:
+        if action == 'force_close':
+            if ticket.status != TicketStatusEnum.active:
+                return jsonify({'error': 'invalid_state', 'message': 'Only active tickets can be force-closed'}), 409
+            exit_ts = datetime.utcnow()
+            ticket.exit_timestamp = exit_ts
+            ticket.duration = calculate_duration(ticket.entry_timestamp, exit_ts)
+            ticket.total_fee = calculate_fee(ticket.duration)
+            ticket.status = TicketStatusEnum.closed
+            release_spot(ticket.spot_id, exit_ts)
+
+        elif action == 'void':
+            if ticket.status not in (TicketStatusEnum.active, TicketStatusEnum.closed):
+                return jsonify({'error': 'invalid_state', 'message': 'Ticket cannot be voided in current state'}), 409
+            was_active = ticket.status == TicketStatusEnum.active
+            ticket.status = TicketStatusEnum.voided
+            if was_active:
+                release_spot(ticket.spot_id, datetime.utcnow())
+
+        elif action == 'correct_spot':
+            new_spot_id = data.get('spotId')
+            if not new_spot_id:
+                return jsonify({'error': 'missing_required_field', 'message': 'spotId is required for correct_spot'}), 400
+            new_spot = ParkingSpot.query.get(new_spot_id)
+            if not new_spot:
+                return jsonify({'error': 'spot_not_found', 'message': 'No spot found with that ID'}), 404
+            if new_spot.status == SpotStatusEnum.occupied and new_spot.spot_id != ticket.spot_id:
+                return jsonify({'error': 'spot_occupied', 'message': 'Target spot is already occupied'}), 409
+            # Release old spot if active
+            if ticket.status == TicketStatusEnum.active:
+                release_spot(ticket.spot_id, datetime.utcnow())
+                new_spot.status = SpotStatusEnum.occupied
+                from models import Floor, OccupancyLog, OccupancyChangeEnum
+                floor = Floor.query.get(new_spot.floor_id)
+                if floor:
+                    floor.available_spots -= 1
+                db.session.add(OccupancyLog(
+                    spot_id=new_spot.spot_id,
+                    changed_at=datetime.utcnow(),
+                    change_type=OccupancyChangeEnum.occupied,
+                ))
+            ticket.spot_id = new_spot.spot_id
+
+        db.session.add(SystemEvent(
+            staff_id=g.current_user.operator_id,
+            source='ticket_override',
+            description=f'Ticket {ticket_id}: action={action}. Reason: {reason}',
+        ))
+        db.session.commit()
+
+        return jsonify({
+            'ticketId': ticket.ticket_id,
+            'status': ticket.status.value,
+            'action': action,
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        log_error('tickets.override', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to process override'}), 500

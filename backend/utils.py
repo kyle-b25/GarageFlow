@@ -37,8 +37,46 @@ def calculate_duration(entry_ts, exit_ts):
     return math.ceil((exit_ts - entry_ts).total_seconds() / 60)
 
 
+def _fee_flat(duration_minutes, **params):
+    """Flat fee regardless of duration."""
+    return Decimal(str(params.get('rate', '10.00')))
+
+
+def _fee_hourly(duration_minutes, **params):
+    """Base + per-hour (ceiling)."""
+    base = Decimal(str(params.get('base', '5.00')))
+    per_hour = Decimal(str(params.get('per_hour', '2.00')))
+    return base + per_hour * math.ceil(duration_minutes / 60)
+
+
+def _fee_special(duration_minutes, **params):
+    """Discounted rate — half the hourly rate."""
+    base = Decimal(str(params.get('base', '3.00')))
+    per_hour = Decimal(str(params.get('per_hour', '1.00')))
+    return base + per_hour * math.ceil(duration_minutes / 60)
+
+
+# Registry of named pricing callables — maps program field to function
+PRICING_PROGRAMS = {
+    'flat': _fee_flat,
+    'hourly': _fee_hourly,
+    'special': _fee_special,
+}
+
+
 def calculate_fee(duration_minutes):
-    """$5.00 base + $2.00 per hour (ceiling)."""
+    """Calculate fee, consulting pricing_rule table if a rule exists.
+
+    Falls back to the default $5.00 base + $2.00/hour if no active rule
+    is found or the program is unresolvable.
+    """
+    try:
+        from models import PricingRule
+        rule = PricingRule.query.first()
+        if rule and rule.program in PRICING_PROGRAMS:
+            return PRICING_PROGRAMS[rule.program](duration_minutes)
+    except Exception:
+        pass  # DB not available (e.g. during import) — use default
     return Decimal('5.00') + Decimal('2.00') * math.ceil(duration_minutes / 60)
 
 

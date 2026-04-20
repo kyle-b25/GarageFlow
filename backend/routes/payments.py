@@ -46,6 +46,69 @@ def _payment_json(payment):
 
 
 # ------------------------------------------------------------------
+#  GET /v1/payments/config — Stripe publishable key for frontend
+# ------------------------------------------------------------------
+
+@payments_bp.route('/config', methods=['GET'])
+def payment_config():
+    """Return Stripe publishable key so the frontend can initialise Elements."""
+    key = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
+    return jsonify({'publishableKey': key}), 200
+
+
+# ------------------------------------------------------------------
+#  POST /v1/payments/create-intent — Create Stripe PaymentIntent
+# ------------------------------------------------------------------
+
+@payments_bp.route('/create-intent', methods=['POST'])
+def create_payment_intent():
+    """Create a Stripe PaymentIntent for a closed ticket's fee."""
+    from app import db
+    from models import Ticket, Payment, TicketStatusEnum
+
+    data = request.get_json(silent=True) or {}
+    ticket_id = data.get('ticketId')
+
+    if not ticket_id:
+        return jsonify({'error': 'missing_required_field',
+                        'message': 'ticketId is required'}), 400
+
+    ticket = Ticket.query.get(ticket_id)
+    if not ticket:
+        return jsonify({'error': 'ticket_not_found',
+                        'message': 'Ticket not found'}), 404
+    if ticket.status != TicketStatusEnum.closed:
+        return jsonify({'error': 'ticket_not_closed',
+                        'message': 'Ticket must be closed before creating payment intent'}), 409
+    if not ticket.total_fee or float(ticket.total_fee) <= 0:
+        return jsonify({'error': 'no_fee',
+                        'message': 'Ticket has no calculated fee'}), 400
+
+    _ensure_stripe_key()
+    try:
+        intent = stripe.PaymentIntent.create(
+            amount=int(float(ticket.total_fee) * 100),
+            currency='usd',
+            metadata={'ticket_id': str(ticket.ticket_id)},
+        )
+
+        # Link intent to existing payment record so webhook can find it
+        payment = Payment.query.filter_by(ticket_id=ticket_id).first()
+        if payment:
+            payment.stripe_payment_intent_id = intent.id
+            db.session.commit()
+
+        return jsonify({
+            'clientSecret': intent.client_secret,
+            'paymentIntentId': intent.id,
+            'amount': float(ticket.total_fee),
+        }), 200
+    except stripe.error.StripeError as exc:
+        return jsonify({'error': 'stripe_error',
+                        'message': str(exc)}), 502
+
+
+# ------------------------------------------------------------------
 #  POST /v1/payments — Charge a ticket
 # ------------------------------------------------------------------
 

@@ -50,6 +50,7 @@ def health():
 from routes import (
     v1_bp, tickets_bp, token_auth_bp, analytics_bp,
     payments_bp, reservations_bp, spaces_bp, staff_bp, admin_bp,
+    gates_bp, pricing_bp,
 )
 
 app.register_blueprint(v1_bp)
@@ -61,6 +62,8 @@ app.register_blueprint(payments_bp)
 app.register_blueprint(spaces_bp)
 app.register_blueprint(reservations_bp)
 app.register_blueprint(admin_bp)
+app.register_blueprint(gates_bp)
+app.register_blueprint(pricing_bp)
 
 
 # ------------------------------------------------------------------

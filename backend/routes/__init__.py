@@ -12,8 +12,11 @@ from routes.reservations import reservations_bp
 from routes.spaces import spaces_bp
 from routes.staff import staff_bp
 from routes.admin import admin_bp
+from routes.gates import gates_bp
+from routes.pricing import pricing_bp
 
 __all__ = [
     'v1_bp', 'tickets_bp', 'token_auth_bp', 'analytics_bp',
     'payments_bp', 'reservations_bp', 'spaces_bp', 'staff_bp', 'admin_bp',
+    'gates_bp', 'pricing_bp',
 ]
