@@ -318,6 +318,7 @@ def cancel_reservation(reservation_id):
         r.status = ReservationStatusEnum.cancelled
 
         # Purge personal data only if customer has no other active reservations
+        import hashlib
         if customer:
             other_active = Reservation.query.filter(
                 Reservation.customer_id == customer.customer_id,
@@ -325,8 +326,9 @@ def cancel_reservation(reservation_id):
                 Reservation.status == ReservationStatusEnum.confirmed,
             ).first()
             if not other_active:
-                customer.phone_number = f'REDACTED-{customer.customer_id}'  # Fixed: phone_number is NOT NULL per schema.sq1
-                customer.name = 'REDACTED'  # Fixed: name is NOT NULL per schema.sq1
+                cust_hash = hashlib.sha256(f'customer:{customer.customer_id}'.encode()).hexdigest()[:12]
+                customer.phone_number = f'REDACTED-{cust_hash}'
+                customer.name = f'REDACTED-{cust_hash}'
 
         db.session.commit()
         return jsonify(_reservation_json(r)), 200

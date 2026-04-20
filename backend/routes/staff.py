@@ -7,10 +7,9 @@ Admin-only routes additionally use the @require_admin decorator.
   staff_bp — Flask Blueprint; register with app.register_blueprint()
 """
 
-from collections import defaultdict
 from datetime import datetime, timedelta
 import bcrypt
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify
 
 from utils import get_current_user, require_role, log_error
 

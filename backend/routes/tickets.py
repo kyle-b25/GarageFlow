@@ -334,6 +334,7 @@ def delete_ticket_personal(ticket_id):
     ticket.phone = None
 
     # Only redact the vehicle plate if no other tickets reference this vehicle
+    import hashlib
     vehicle = Vehicle.query.get(ticket.vehicle_id)
     if vehicle:
         other_tickets = Ticket.query.filter(
@@ -342,16 +343,18 @@ def delete_ticket_personal(ticket_id):
         ).first()
         if other_tickets:
             # Dissociate this ticket from the shared vehicle instead of mutating it
+            plate_hash = hashlib.sha256(f'ticket:{ticket.ticket_id}'.encode()).hexdigest()[:12]
             redacted_vehicle = Vehicle(
-                license_plate=f'REDACTED-{ticket.ticket_id}',
-                plate_state='REDACTED',  # Fixed: plate_state is NOT NULL per schema.sq1
+                license_plate=f'REDACTED-{plate_hash}',
+                plate_state='XX',
                 vehicle_type=vehicle.vehicle_type,
             )
             db.session.add(redacted_vehicle)
             db.session.flush()
             ticket.vehicle_id = redacted_vehicle.vehicle_id
         else:
-            vehicle.license_plate = f'REDACTED-{vehicle.vehicle_id}'
+            plate_hash = hashlib.sha256(f'vehicle:{vehicle.vehicle_id}'.encode()).hexdigest()[:12]
+            vehicle.license_plate = f'REDACTED-{plate_hash}'
 
     try:
         db.session.commit()
