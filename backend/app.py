@@ -6,6 +6,7 @@ Creates the Flask app, registers all blueprints.
 from flask import Flask, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
+from flask_cors import CORS
 from dotenv import load_dotenv
 from datetime import timedelta
 import click
@@ -15,7 +16,8 @@ load_dotenv()
 
 app = Flask(__name__,
             template_folder='../frontend',
-            static_folder='../frontend')
+            static_folder='../frontend/static',
+            static_url_path='/static')
 _secret = os.getenv('SECRET_KEY')
 if not _secret and os.getenv('FLASK_ENV') not in ('development', 'testing', None):
     raise RuntimeError(
@@ -27,8 +29,15 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///dat
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=365)
 
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
+
+# CORS — same-origin by default; override with CORS_ORIGINS env var
+_cors_origins = os.getenv('CORS_ORIGINS', '').split(',') if os.getenv('CORS_ORIGINS') else []
+CORS(app, origins=_cors_origins or ['*'], supports_credentials=True)
 
 import models  # noqa: F401 — registers all models with SQLAlchemy metadata
 
