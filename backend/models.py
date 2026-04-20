@@ -272,12 +272,13 @@ class Staff(db.Model):
     """
     __tablename__ = "staff"
 
-    operator_id   = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    name          = db.Column(db.String(100), nullable=False)
-    role          = db.Column(db.Enum(StaffRoleEnum, create_constraint=True, name='ck_staff_role'), nullable=False, default=StaffRoleEnum.attendant)  # Fixed: added create_constraint + name
-    username      = db.Column(db.String(50),  unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    is_active     = db.Column(db.Boolean, nullable=False, default=True)
+    operator_id    = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name           = db.Column(db.String(100), nullable=False)
+    role           = db.Column(db.Enum(StaffRoleEnum, create_constraint=True, name='ck_staff_role'), nullable=False, default=StaffRoleEnum.attendant)  # Fixed: added create_constraint + name
+    username       = db.Column(db.String(50),  unique=True, nullable=False)
+    password_hash  = db.Column(db.String(255), nullable=False)
+    is_active      = db.Column(db.Boolean, nullable=False, default=True)
+    is_super_admin = db.Column(db.Boolean, nullable=False, default=False)
 
     # Relationships
     session_tokens = db.relationship('SessionToken', back_populates='staff', cascade='all, delete-orphan')
@@ -475,3 +476,20 @@ class PricingRule(db.Model):
     pricing_model    = db.Column(db.Enum(PricingModelEnum, create_constraint=True, name='ck_pricing_model'), nullable=False)  # Fixed: added create_constraint + name
     description      = db.Column(db.Text, nullable=False)  # Fixed: nullable=True->False per schema.sq1/Task5
     program          = db.Column(db.String(255), nullable=False)   # Fixed: String(100)->String(255), nullable=True->False per schema.sq1/Task5
+
+
+# =============================================================
+#  SECURITY
+# =============================================================
+
+class LoginAttempt(db.Model):
+    """
+    DB-backed rate limiting for login attempts.
+    Tracks failed login count per IP within a sliding window.
+    Survives worker restarts and works across multi-worker deployments.
+    """
+    __tablename__ = "login_attempt"
+
+    ip_address   = db.Column(db.String(45), primary_key=True)  # IPv6 max length
+    fail_count   = db.Column(db.Integer, nullable=False, default=0)
+    window_start = db.Column(db.DateTime, nullable=False)

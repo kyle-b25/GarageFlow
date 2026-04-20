@@ -22,8 +22,7 @@ token_auth_bp = Blueprint('token_auth', __name__, url_prefix='/v1/auth')
 
 _TOKEN_TTL_HOURS = 8
 
-# In-memory failed-login tracker: { ip: {'count': int, 'window_start': datetime} }
-_failed_attempts: dict = {}
+# DB-backed rate limiting — survives worker restarts, works across processes.
 _RATE_LIMIT_MAX = 5
 _RATE_LIMIT_WINDOW = 60  # seconds
 
@@ -33,27 +32,40 @@ def _get_client_ip() -> str:
 
 
 def _is_rate_limited(ip: str) -> bool:
+    from app import db
+    from models import LoginAttempt
     now = datetime.utcnow()
-    entry = _failed_attempts.get(ip)
+    entry = LoginAttempt.query.get(ip)
     if not entry:
         return False
-    if (now - entry['window_start']).total_seconds() > _RATE_LIMIT_WINDOW:
-        del _failed_attempts[ip]
+    if (now - entry.window_start).total_seconds() > _RATE_LIMIT_WINDOW:
+        db.session.delete(entry)
+        db.session.commit()
         return False
-    return entry['count'] >= _RATE_LIMIT_MAX
+    return entry.fail_count >= _RATE_LIMIT_MAX
 
 
 def _record_failure(ip: str) -> None:
+    from app import db
+    from models import LoginAttempt
     now = datetime.utcnow()
-    entry = _failed_attempts.get(ip)
-    if not entry or (now - entry['window_start']).total_seconds() > _RATE_LIMIT_WINDOW:
-        _failed_attempts[ip] = {'count': 1, 'window_start': now}
+    entry = LoginAttempt.query.get(ip)
+    if not entry or (now - entry.window_start).total_seconds() > _RATE_LIMIT_WINDOW:
+        if entry:
+            db.session.delete(entry)
+        db.session.add(LoginAttempt(ip_address=ip, fail_count=1, window_start=now))
     else:
-        _failed_attempts[ip]['count'] += 1
+        entry.fail_count += 1
+    db.session.commit()
 
 
 def _clear_failures(ip: str) -> None:
-    _failed_attempts.pop(ip, None)
+    from app import db
+    from models import LoginAttempt
+    entry = LoginAttempt.query.get(ip)
+    if entry:
+        db.session.delete(entry)
+        db.session.commit()
 
 
 def _create_token(staff_id):

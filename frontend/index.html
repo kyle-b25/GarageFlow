@@ -85,11 +85,22 @@
   .main-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto auto;
     gap: 16px;
     flex: 1;
   }
   @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
+
+  /* ── Grid placement ── */
+  #panel-entry       { grid-column: 1; grid-row: 1; }
+  #panel-exit        { grid-column: 1; grid-row: 2; }
+  #panel-floor       { grid-column: 1; grid-row: 3; }
+  #panel-reservation { grid-column: 2; grid-row: 1 / 4; }
+  #panel-dashboard   { grid-column: 1 / -1; }
+  @media (max-width: 900px) {
+    #panel-entry, #panel-exit, #panel-floor, #panel-reservation, #panel-dashboard {
+      grid-column: 1; grid-row: auto;
+    }
+  }
 
   .panel {
     background: var(--surface);
@@ -115,8 +126,8 @@
     display: block; margin-bottom: 5px;
   }
 
-  input[type="text"], input[type="tel"],
-  input[type="date"], input[type="time"], select {
+  input[type="text"], input[type="tel"], input[type="password"],
+  input[type="date"], input[type="time"], input[type="number"], select {
     background: var(--input-bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -137,7 +148,7 @@
 
   .select-wrap { position: relative; }
   .select-wrap::after {
-    content: '▾';
+    content: '\25BE';
     position: absolute; right: 10px; top: 50%;
     transform: translateY(-50%);
     color: var(--text-muted); pointer-events: none; font-size: 12px;
@@ -175,6 +186,9 @@
   }
   .btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-danger-text:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
   .check-label {
     display: flex; align-items: center; gap: 8px;
     cursor: pointer; font-size: 14px; font-weight: 500;
@@ -183,16 +197,6 @@
   .check-label input[type="checkbox"] {
     width: 18px; height: 18px;
     accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
-  }
-
-  /* ── Grid placement ── */
-  #panel-entry       { grid-column: 1; grid-row: 1; }
-  #panel-floor       { grid-column: 1; grid-row: 2; }
-  #panel-reservation { grid-column: 2; grid-row: 1 / 3; }
-  @media (max-width: 900px) {
-    #panel-entry, #panel-floor, #panel-reservation {
-      grid-column: 1; grid-row: auto;
-    }
   }
 
   /* ── Floor cards ── */
@@ -261,14 +265,61 @@
     border-radius: 20px; font-size: 11px; font-weight: 600;
     letter-spacing: 0.05em; text-transform: uppercase;
   }
-  .badge-expired   { background: rgba(231,76,60,0.15);  color: var(--danger); }
-  .badge-completed { background: rgba(46,204,113,0.15); color: var(--success); }
-  .badge-ongoing   { background: rgba(52,152,219,0.15); color: var(--ongoing); }
+  .badge-expired    { background: rgba(231,76,60,0.15);  color: var(--danger); }
+  .badge-completed  { background: rgba(46,204,113,0.15); color: var(--success); }
+  .badge-ongoing    { background: rgba(52,152,219,0.15); color: var(--ongoing); }
+  .badge-cancelled  { background: rgba(150,150,150,0.15); color: var(--text-muted); }
 
   .footer {
     border-top: 1px solid var(--border); padding-top: 10px;
     margin-top: 16px; font-size: 11px;
     color: var(--text-dim); text-align: center; letter-spacing: 0.04em;
+  }
+
+  .congestion-banner {
+    display: none;
+    background: rgba(231,76,60,0.15);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    padding: 10px 16px;
+    margin-bottom: 12px;
+    color: var(--danger);
+    font-weight: 600;
+    font-size: 14px;
+    text-align: center;
+  }
+
+  /* ── Dashboard tabs ── */
+  .tab-bar {
+    display: flex; gap: 4px; margin-bottom: 16px;
+    border-bottom: 1px solid var(--border); padding-bottom: 4px;
+  }
+  .tab-btn {
+    background: none; border: none; color: var(--text-muted);
+    font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600;
+    padding: 8px 16px; cursor: pointer; border-radius: 6px 6px 0 0;
+    letter-spacing: 0.03em; transition: all 0.15s;
+  }
+  .tab-btn:hover { color: var(--accent); }
+  .tab-btn.active {
+    color: var(--accent);
+    background: var(--surface2);
+    border-bottom: 2px solid var(--accent);
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── Staff form row ── */
+  .staff-create-row {
+    display: grid; grid-template-columns: 1fr 1fr 1fr auto auto;
+    gap: 8px; align-items: end; margin-bottom: 16px;
+  }
+  @media (max-width: 700px) { .staff-create-row { grid-template-columns: 1fr; } }
+
+  /* ── Audit filter row ── */
+  .audit-filter-row {
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 8px; align-items: end; margin-bottom: 12px;
   }
 </style>
 </head>
@@ -279,7 +330,7 @@
 <div class="page">
 
   <div class="header">
-    <div class="logo-icon">🏢</div>
+    <div class="logo-icon">&#127970;</div>
     <div style="display:flex; align-items:baseline; gap:16px;">
       <div class="brand-name">GarageFlow   </div>
       <div id="garage-name" style="
@@ -291,13 +342,15 @@
         -webkit-text-fill-color: transparent;
         background-clip: text;
         line-height: 1;
-      ">—</div>
+      ">&mdash;</div>
     </div>
   </div>
 
+  <div id="congestion-banner" class="congestion-banner"></div>
+
   <div class="main-grid">
 
-    <!-- ── Garage Entry ── -->
+    <!-- ══ Garage Entry ══ -->
     <div class="panel" id="panel-entry">
       <div class="panel-title">Garage Entry</div>
 
@@ -310,7 +363,7 @@
         <label for="vehicle-type">Driver Class</label>
         <div class="select-wrap">
           <select id="vehicle-type">
-            <option value="">Select driver class…</option>
+            <option value="">Select driver class...</option>
             <option value="standard">Standard</option>
             <option value="accessibility">Accessibility</option>
             <option value="employee">Employee</option>
@@ -320,7 +373,7 @@
       </div>
 
       <div style="margin-top:20px; display:flex; justify-content:flex-end;">
-        <button class="btn btn-primary" id="btn-entry-submit">✔ Finish Entry</button>
+        <button class="btn btn-primary" id="btn-entry-submit" data-label="Finish Entry">Finish Entry</button>
       </div>
 
       <div id="entry-confirmation" style="display:none; margin-top:16px; padding:16px; background:var(--surface2); border:1px solid var(--success); border-radius:var(--radius);">
@@ -341,32 +394,76 @@
       </div>
     </div>
 
-    <!-- ── Floor Overview ── -->
+    <!-- ══ Vehicle Exit ══ -->
+    <div class="panel" id="panel-exit">
+      <div class="panel-title">Vehicle Exit</div>
+
+      <div class="field">
+        <label for="exit-plate">License Plate</label>
+        <input type="text" id="exit-plate" placeholder="e.g. ABC-1234">
+      </div>
+      <div style="margin-top:10px; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn btn-secondary" id="btn-exit-lookup" data-label="Look Up Ticket">Look Up Ticket</button>
+      </div>
+
+      <div id="exit-ticket-info" style="display:none; margin-top:16px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:6px 12px; font-size:14px;">
+          <span style="color:var(--text-muted);">Ticket ID</span>
+          <span id="exit-ticket-id" style="font-weight:600;"></span>
+          <span style="color:var(--text-muted);">Entry Time</span>
+          <span id="exit-entry-time"></span>
+          <span id="exit-fee-row" style="display:none; color:var(--text-muted);">Fee</span>
+          <span id="exit-fee-display" style="display:none; font-weight:600; color:var(--accent);"></span>
+        </div>
+
+        <div class="field" style="margin-top:14px;">
+          <label for="exit-payment">Payment Method</label>
+          <div class="select-wrap">
+            <select id="exit-payment">
+              <option value="cash">Cash</option>
+              <option value="card">Card (Stripe)</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="exit-card-wrap" style="display:none; margin-top:12px;">
+          <label>Card Details</label>
+          <div id="exit-card-element" style="padding:12px; background:var(--input-bg); border:1px solid var(--border); border-radius:var(--radius); min-height:40px;"></div>
+        </div>
+
+        <div style="margin-top:14px; display:flex; gap:8px;">
+          <button class="btn btn-primary" id="btn-exit-process" style="flex:1;" data-label="Process Exit">Process Exit</button>
+          <button class="btn btn-primary" id="btn-exit-pay" style="flex:1; display:none;" data-label="Pay">Pay</button>
+        </div>
+      </div>
+
+      <div id="exit-result" style="display:none; margin-top:14px; padding:12px; border-radius:var(--radius); font-size:13px;"></div>
+    </div>
+
+    <!-- ══ Floor Overview ══ -->
     <div class="panel" id="panel-floor">
       <div class="panel-title">Floor Overview</div>
 
       <div style="margin-bottom:14px;">
-        <button class="btn btn-secondary" id="btn-floor-show" data-visible="false">Load Floor Data</button>
+        <button class="btn btn-secondary" id="btn-floor-show" data-visible="false" data-label="Load Floor Data">Load Floor Data</button>
       </div>
       <div id="floor-cards" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:12px;"></div>
     </div>
 
-    <!-- ── Parking Reservation Entry ── -->
+    <!-- ══ Parking Reservation Entry ══ -->
     <div class="panel" id="panel-reservation">
       <div class="panel-title" style="display:flex; justify-content:space-between; align-items:baseline;">
         Parking Reservation Entry
         <span style="font-family:'DM Sans',sans-serif; font-size:13px; font-weight:500; color:var(--text-muted); letter-spacing:0.03em;">
-          📞 <span id="garage-phone">—</span>
+          &#128222; <span id="garage-phone">&mdash;</span>
         </span>
       </div>
 
-      <!-- phone: required per spec -->
       <div class="field">
         <label for="res-phone">Phone # <span style="color:var(--danger)">*</span></label>
         <input type="tel" id="res-phone" placeholder="e.g. 001-555-0000">
       </div>
 
-      <!-- scheduledArrival: required per spec (ISO 8601 datetime) -->
       <div class="field">
         <label>Scheduled Arrival <span style="color:var(--danger)">*</span></label>
         <div class="datetime-row">
@@ -375,18 +472,16 @@
         </div>
       </div>
 
-      <!-- licensePlate: required by backend for vehicle resolution -->
       <div class="field">
         <label for="res-plate">License Plate <span style="color:var(--danger)">*</span></label>
         <input type="text" id="res-plate" placeholder="e.g. ABC-1234">
       </div>
 
-      <!-- driverClass: optional enum per spec -->
       <div class="field">
         <label for="res-driver-class">Driver Class</label>
         <div class="select-wrap">
           <select id="res-driver-class">
-            <option value="">Select class… (optional)</option>
+            <option value="">Select class... (optional)</option>
             <option value="standard">Standard</option>
             <option value="accessibility">Accessibility</option>
             <option value="employee">Employee</option>
@@ -396,18 +491,17 @@
       </div>
 
       <div style="margin-top:20px; display:flex; justify-content:flex-end;">
-        <button class="btn btn-primary" id="btn-res-submit">✔ Finish Entry</button>
+        <button class="btn btn-primary" id="btn-res-submit" data-label="Finish Entry">Finish Entry</button>
       </div>
 
-      <!-- API response feedback -->
       <div id="res-feedback" style="display:none; margin-top:14px; padding:12px; border-radius:var(--radius); font-size:13px;"></div>
 
       <!-- Search -->
       <div class="sub-section">
         <div class="sub-title">Search Reservations</div>
-		
-		<div style="margin-bottom:12px;">
-          <button class="btn btn-secondary" id="btn-upcoming" style="width:100%;">Show Upcoming</button>
+
+        <div style="margin-bottom:12px;">
+          <button class="btn btn-secondary" id="btn-upcoming" style="width:100%;" data-label="Show Upcoming">Show Upcoming</button>
         </div>
 
         <div class="search-row">
@@ -416,7 +510,7 @@
             <input type="tel" id="search-val" placeholder="e.g. 001-555-0000">
           </div>
           <div style="align-self:flex-end;">
-            <button class="btn btn-secondary" id="btn-res-search" style="white-space:nowrap;">Search</button>
+            <button class="btn btn-secondary" id="btn-res-search" style="white-space:nowrap;" data-label="Search">Search</button>
           </div>
         </div>
 
@@ -432,12 +526,13 @@
                 <th>Scheduled Arrival</th>
                 <th>Assigned Floor</th>
                 <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="res-tbody">
               <tr>
-                <td colspan="4" style="text-align:center; color:var(--text-dim); padding:20px;">
-                  No results — use search above
+                <td colspan="5" style="text-align:center; color:var(--text-dim); padding:20px;">
+                  No results &mdash; use search above
                 </td>
               </tr>
             </tbody>
@@ -447,9 +542,15 @@
 
     </div>
 
-    <!-- ── Operator Dashboard ── -->
-    <div class="panel" id="panel-dashboard" style="grid-column: 1 / -1;">
-      <div class="panel-title">Operator Dashboard</div>
+    <!-- ══ Operator Dashboard ══ -->
+    <div class="panel" id="panel-dashboard">
+      <div class="panel-title" style="display:flex; justify-content:space-between; align-items:baseline;">
+        Operator Dashboard
+        <div id="dash-user-info" style="display:none; font-family:'DM Sans',sans-serif;">
+          <span id="dash-username" style="font-size:13px; color:var(--text-muted);"></span>
+          <button class="btn btn-secondary btn-sm" id="btn-dash-logout" style="margin-left:8px;" data-label="Logout">Logout</button>
+        </div>
+      </div>
 
       <div id="dash-login" style="margin-bottom:14px;">
         <div style="display:grid; grid-template-columns:1fr 1fr auto; gap:8px; align-items:end;">
@@ -466,32 +567,122 @@
       </div>
 
       <div id="dash-content" style="display:none;">
-        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px;">
-          <div class="zone-card"><div class="zone-card-title">Occupied</div><div id="dash-occupied" style="font-size:24px; font-weight:600;">—</div></div>
-          <div class="zone-card"><div class="zone-card-title">Available</div><div id="dash-available" style="font-size:24px; font-weight:600;">—</div></div>
-          <div class="zone-card"><div class="zone-card-title">Occupancy Rate</div><div id="dash-rate" style="font-size:24px; font-weight:600;">—</div></div>
-          <div class="zone-card"><div class="zone-card-title">Revenue (7d)</div><div id="dash-revenue" style="font-size:24px; font-weight:600;">—</div></div>
+
+        <div class="tab-bar">
+          <button class="tab-btn active" data-tab="tab-analytics">Analytics</button>
+          <button class="tab-btn" data-tab="tab-staff">Staff</button>
+          <button class="tab-btn" data-tab="tab-audit">Audit Log</button>
+          <button class="tab-btn" data-tab="tab-config">Config</button>
         </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-          <div class="zone-card">
-            <div class="zone-card-title">Daily Entries (7d)</div>
-            <div id="dash-util" style="font-size:13px; color:var(--text-muted);"></div>
+
+        <!-- ── Tab: Analytics ── -->
+        <div id="tab-analytics" class="tab-content active">
+          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px;">
+            <div class="zone-card"><div class="zone-card-title">Occupied</div><div id="dash-occupied" style="font-size:24px; font-weight:600;">&mdash;</div></div>
+            <div class="zone-card"><div class="zone-card-title">Available</div><div id="dash-available" style="font-size:24px; font-weight:600;">&mdash;</div></div>
+            <div class="zone-card"><div class="zone-card-title">Occupancy Rate</div><div id="dash-rate" style="font-size:24px; font-weight:600;">&mdash;</div></div>
+            <div class="zone-card"><div class="zone-card-title">Revenue (7d)</div><div id="dash-revenue" style="font-size:24px; font-weight:600;">&mdash;</div></div>
           </div>
-          <div class="zone-card">
-            <div class="zone-card-title">Peak Hours (7d)</div>
-            <div id="dash-peak" style="font-size:13px; color:var(--text-muted);"></div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div class="zone-card">
+              <div class="zone-card-title">Daily Entries (7d)</div>
+              <div id="dash-util" style="font-size:13px; color:var(--text-muted);"></div>
+            </div>
+            <div class="zone-card">
+              <div class="zone-card-title">Peak Hours (7d)</div>
+              <div id="dash-peak" style="font-size:13px; color:var(--text-muted);"></div>
+            </div>
           </div>
+          <button class="btn btn-secondary" id="btn-dash-refresh" data-label="Refresh" style="margin-top:12px;">Refresh</button>
         </div>
-        <button class="btn btn-secondary" id="btn-dash-refresh" data-label="Refresh" style="margin-top:12px;">Refresh</button>
-      </div>
+
+        <!-- ── Tab: Staff Management ── -->
+        <div id="tab-staff" class="tab-content">
+          <div class="sub-title">Create Staff Account</div>
+          <div class="staff-create-row">
+            <div class="field" style="margin-bottom:0">
+              <label for="staff-new-name">Name</label>
+              <input type="text" id="staff-new-name" placeholder="Full name">
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label for="staff-new-username">Username</label>
+              <input type="text" id="staff-new-username" placeholder="Username">
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label for="staff-new-password">Password</label>
+              <input type="password" id="staff-new-password" placeholder="Min 8 chars">
+            </div>
+            <div class="field" style="margin-bottom:0">
+              <label for="staff-new-role">Role</label>
+              <div class="select-wrap">
+                <select id="staff-new-role">
+                  <option value="attendant">attendant</option>
+                  <option value="admin">admin</option>
+                  <option value="manager">manager</option>
+                </select>
+              </div>
+            </div>
+            <div style="align-self:flex-end;">
+              <button class="btn btn-primary btn-sm" id="btn-staff-create" data-label="Create">Create</button>
+            </div>
+          </div>
+          <div class="sub-title">Staff Accounts</div>
+          <div id="staff-list" class="res-table-wrap" style="border:none;"></div>
+        </div>
+
+        <!-- ── Tab: Audit Log ── -->
+        <div id="tab-audit" class="tab-content">
+          <div class="audit-filter-row">
+            <div class="field" style="margin-bottom:0">
+              <label for="audit-action">Filter by source</label>
+              <input type="text" id="audit-action" placeholder="e.g. ticket_override">
+            </div>
+            <div style="align-self:flex-end;">
+              <button class="btn btn-secondary btn-sm" id="btn-audit-filter" data-label="Filter">Filter</button>
+            </div>
+          </div>
+          <div id="audit-list" class="res-table-wrap" style="border:none;"></div>
+        </div>
+
+        <!-- ── Tab: Garage Config ── -->
+        <div id="tab-config" class="tab-content">
+          <div class="sub-title">Create Garage</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+            <div class="field">
+              <label for="cfg-name">Garage Name</label>
+              <input type="text" id="cfg-name" placeholder="e.g. Main Street Garage">
+            </div>
+            <div class="field">
+              <label for="cfg-capacity">Total Capacity</label>
+              <input type="number" id="cfg-capacity" placeholder="e.g. 200">
+            </div>
+            <div class="field">
+              <label for="cfg-floors">Number of Floors</label>
+              <input type="number" id="cfg-floors" placeholder="e.g. 5">
+            </div>
+            <div class="field">
+              <label for="cfg-hours">Operating Hours</label>
+              <input type="text" id="cfg-hours" placeholder="e.g. 06:00-22:00">
+            </div>
+          </div>
+          <div style="margin-top:12px; display:flex; justify-content:flex-end;">
+            <button class="btn btn-primary" id="btn-cfg-create" data-label="Create Garage">Create Garage</button>
+          </div>
+          <div id="cfg-result" style="display:none; margin-top:14px; padding:12px; border-radius:var(--radius); font-size:13px;"></div>
+        </div>
+
+      </div><!-- /dash-content -->
     </div>
 
   </div><!-- /main-grid -->
 
-  <div class="footer">GarageFlow Kiosk System &nbsp;·&nbsp; Powered by GarageFlow API</div>
+  <div class="footer">GarageFlow Kiosk System &nbsp;&middot;&nbsp; Powered by GarageFlow API</div>
 </div>
 
-<!-- Load app logic as a module. Looking for "app.js" likely to further delegate to "api.js" -->
+<!-- Stripe.js for card payments (loaded async, only used when card is selected) -->
+<script src="https://js.stripe.com/v3/" async></script>
+
+<!-- Load app logic as a module -->
 <script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
 
 </body>

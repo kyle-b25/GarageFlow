@@ -27,12 +27,12 @@ analytics_bp = Blueprint('analytics', __name__, url_prefix='/v1/analytics')
 
 def _parse_range():
     """
-    Parse required ?start and ?end ISO 8601 query params.
-    Returns (start_dt, end_dt) as naive-UTC datetimes.
+    Parse required date-range query params as naive-UTC datetimes.
+    Accepts ?start/?end or ?from/?to (the latter for frontend compat).
     Raises ValueError on missing, malformed, or reversed dates.
     """
-    raw_start = request.args.get('start')
-    raw_end = request.args.get('end')
+    raw_start = request.args.get('start') or request.args.get('from')
+    raw_end = request.args.get('end') or request.args.get('to')
 
     if not raw_start or not raw_end:
         missing = 'start' if not raw_start else 'end'
@@ -60,10 +60,6 @@ def _parse_range():
 
 # ------------------------------------------------------------------
 #  GET /v1/analytics/utilization
-#  WARNING: ROUTE COLLISION — this path is also registered in
-#  staff_bp (routes/staff.py) with a simpler implementation and
-#  different query params (?from/?to vs ?start/?end). The staff_bp
-#  version wins because it is registered after analytics_bp in app.py.
 # ------------------------------------------------------------------
 
 @analytics_bp.route('/utilization', methods=['GET'])
@@ -311,10 +307,6 @@ def occupancy():
 
 # ------------------------------------------------------------------
 #  GET /v1/analytics/peak-hours
-#  WARNING: ROUTE COLLISION — this path is also registered in
-#  staff_bp (routes/staff.py) with a simpler implementation and
-#  different query params (?from/?to vs ?start/?end). The staff_bp
-#  version wins because it is registered after analytics_bp in app.py.
 # ------------------------------------------------------------------
 
 @analytics_bp.route('/peak-hours', methods=['GET'])

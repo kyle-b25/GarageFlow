@@ -168,7 +168,92 @@ def get_garage():
         log_error('routes.get_garage', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch garage info'}), 500
         
-        
+
+
+# ------------------------------------------------------------------
+#  GET /v1/capacity/alert — Congestion alert
+# ------------------------------------------------------------------
+
+_CONGESTION_THRESHOLD = float(os.getenv('CONGESTION_THRESHOLD', '0.85'))
+
+@v1_bp.route('/capacity/alert', methods=['GET'])
+def capacity_alert():
+    """Return congestion alert state based on configurable threshold."""
+    from app import db
+    from models import ParkingSpot
+
+    try:
+        spots = ParkingSpot.query.all()
+        total, occupied, available, _ = _count_spots(spots)
+        rate = occupied / total if total > 0 else 0
+        alert = rate >= _CONGESTION_THRESHOLD
+
+        return jsonify({
+            'alert': alert,
+            'occupancyRate': round(rate, 4),
+            'threshold': _CONGESTION_THRESHOLD,
+            'total': total,
+            'occupied': occupied,
+            'available': available,
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        log_error('routes.capacity_alert', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to check congestion'}), 500
+
+
+# ------------------------------------------------------------------
+#  POST /v1/garage — Admin garage configuration (SR-13)
+# ------------------------------------------------------------------
+
+@v1_bp.route('/garage', methods=['POST'])
+def create_garage():
+    """Create a new garage. Replaces the interactive garage_builder workflow."""
+    from app import db
+    from models import Garage
+    from utils import require_role as _rr
+
+    # Inline auth check (can't use decorator on dual-method route)
+    from utils import get_current_user
+    from models import StaffRoleEnum
+    user = get_current_user()
+    if not user or user.role != StaffRoleEnum.admin:
+        return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
+
+    data = request.get_json(silent=True) or {}
+    name = data.get('name')
+    total_capacity = data.get('totalCapacity')
+    number_of_floors = data.get('numberOfFloors')
+    operating_hours = data.get('operatingHours')
+
+    if not name or not total_capacity or not number_of_floors or not operating_hours:
+        return jsonify({'error': 'missing_required_field',
+                        'message': 'name, totalCapacity, numberOfFloors, and operatingHours are required'}), 400
+
+    try:
+        garage = Garage(
+            name=name,
+            total_capacity=total_capacity,
+            number_of_floors=number_of_floors,
+            operating_hours=operating_hours,
+            front_desk_phone=data.get('frontDeskPhone'),
+        )
+        db.session.add(garage)
+        db.session.commit()
+        return jsonify({
+            'garageId': garage.garage_id,
+            'name': garage.name,
+            'totalCapacity': garage.total_capacity,
+            'numberOfFloors': garage.number_of_floors,
+            'operatingHours': garage.operating_hours,
+            'frontDeskPhone': garage.front_desk_phone,
+        }), 201
+    except Exception as exc:
+        db.session.rollback()
+        log_error('routes.create_garage', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to create garage'}), 500
+
+
 # ------------------------------------------------------------------
 #  Stripe webhook helpers
 # ------------------------------------------------------------------
