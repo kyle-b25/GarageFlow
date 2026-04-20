@@ -1,7 +1,7 @@
 """
 tests/test_db_operations.py — Database-level constraint and integrity tests
 
-Complements the groupmate's existing files:
+Complements the existing files from Sameer:
   - db/test_database_operations.sql — happy-path CRUD (INSERT/SELECT/UPDATE/DELETE)
     across all 14 tables wrapped in a ROLLBACK transaction. No error cases.
   - backend/seed_and_indexes.sql  — index creation + data-verification queries.
