@@ -17,7 +17,7 @@ from datetime import datetime
 import stripe
 from flask import Blueprint, request, jsonify
 
-from utils import log_error, calculate_duration, calculate_fee
+from utils import log_error, calculate_duration, calculate_fee, require_role
 
 v1_bp = Blueprint('v1', __name__, url_prefix='/v1')
 
@@ -207,18 +207,11 @@ def capacity_alert():
 # ------------------------------------------------------------------
 
 @v1_bp.route('/garage', methods=['POST'])
+@require_role('admin')
 def create_garage():
     """Create a new garage. Replaces the interactive garage_builder workflow."""
     from app import db
     from models import Garage
-    from utils import require_role as _rr
-
-    # Inline auth check (can't use decorator on dual-method route)
-    from utils import get_current_user
-    from models import StaffRoleEnum
-    user = get_current_user()
-    if not user or user.role != StaffRoleEnum.admin:
-        return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
 
     data = request.get_json(silent=True) or {}
     name = data.get('name')
@@ -259,16 +252,11 @@ def create_garage():
 # ------------------------------------------------------------------
 
 @v1_bp.route('/garage/<int:garage_id>', methods=['PUT'])
+@require_role('admin')
 def update_garage(garage_id):
     """Update an existing garage's configuration."""
     from app import db
     from models import Garage
-    from utils import get_current_user
-    from models import StaffRoleEnum
-
-    user = get_current_user()
-    if not user or user.role != StaffRoleEnum.admin:
-        return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
 
     try:
         garage = Garage.query.get(garage_id)
@@ -307,16 +295,11 @@ def update_garage(garage_id):
 # ------------------------------------------------------------------
 
 @v1_bp.route('/garage/<int:garage_id>', methods=['DELETE'])
+@require_role('admin')
 def delete_garage(garage_id):
     """Delete a garage. Cascades to floors, spots, gates."""
     from app import db
     from models import Garage
-    from utils import get_current_user
-    from models import StaffRoleEnum
-
-    user = get_current_user()
-    if not user or user.role != StaffRoleEnum.admin:
-        return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
 
     try:
         garage = Garage.query.get(garage_id)
