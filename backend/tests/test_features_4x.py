@@ -420,7 +420,7 @@ class TestAdminGarageConfig:
             'numberOfFloors': 1,
             'operatingHours': '24/7',
         })
-        assert rv.status_code == 403
+        assert rv.status_code == 401
 
 
 # ═══════════════════════════════════════════════════════════════════

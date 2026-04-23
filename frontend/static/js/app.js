@@ -851,12 +851,14 @@ async function loadAuditHistory(page = 1) {
 // =============================================================
 
 let _editingGarageId = null;
+let _currentGarage = null;
 
 async function loadGarageConfig() {
   const currentSection = document.getElementById('cfg-current');
   try {
     const g = await getGarage();
-    if (!g) { currentSection.style.display = 'none'; return; }
+    if (!g) { currentSection.style.display = 'none'; _currentGarage = null; return; }
+    _currentGarage = g;
     currentSection.style.display = 'block';
     document.getElementById('cfg-current-info').innerHTML = `
       <div class="zone-row"><span class="zone-key">Name</span><span class="zone-val">${escapeHtml(g.name)}</span></div>
@@ -865,26 +867,21 @@ async function loadGarageConfig() {
       <div class="zone-row"><span class="zone-key">Floors</span><span class="zone-val">${g.numberOfFloors}</span></div>
       <div class="zone-row"><span class="zone-key">Operating Hours</span><span class="zone-val">${escapeHtml(g.operatingHours)}</span></div>
       <div class="zone-row"><span class="zone-key">Phone</span><span class="zone-val">${escapeHtml(g.frontDeskPhone || '—')}</span></div>`;
-    // Store for edit/delete
     currentSection.dataset.garageId = g.garageId;
   } catch (_e) {
     currentSection.style.display = 'none';
+    _currentGarage = null;
   }
 }
 
 function startEditGarage() {
-  const currentSection = document.getElementById('cfg-current');
-  const garageId = currentSection.dataset.garageId;
-  if (!garageId) return;
-  _editingGarageId = garageId;
+  if (!_currentGarage) return;
+  _editingGarageId = _currentGarage.garageId;
 
-  // Pre-fill form from current display
-  const info = currentSection.querySelector('#cfg-current-info');
-  const vals = info.querySelectorAll('.zone-val');
-  document.getElementById('cfg-name').value = vals[0]?.textContent || '';
-  document.getElementById('cfg-capacity').value = vals[2]?.textContent || '';
-  document.getElementById('cfg-floors').value = vals[3]?.textContent || '';
-  document.getElementById('cfg-hours').value = vals[4]?.textContent || '';
+  document.getElementById('cfg-name').value = _currentGarage.name || '';
+  document.getElementById('cfg-capacity').value = _currentGarage.totalCapacity || '';
+  document.getElementById('cfg-floors').value = _currentGarage.numberOfFloors || '';
+  document.getElementById('cfg-hours').value = _currentGarage.operatingHours || '';
 
   document.getElementById('cfg-form-title').textContent = 'Edit Garage';
   document.getElementById('btn-cfg-create').textContent = 'Save Changes';
