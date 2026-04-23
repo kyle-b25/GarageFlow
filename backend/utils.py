@@ -64,19 +64,69 @@ PRICING_PROGRAMS = {
 }
 
 
-def calculate_fee(duration_minutes):
-    """Calculate fee, consulting pricing_rule table if a rule exists.
+def _parse_applicable_hours(applicable_hours):
+    """Parse an applicable_hours string like '06:00-22:00' into (start_hour, end_hour).
 
-    Falls back to the default $5.00 base + $2.00/hour if no active rule
-    is found or the program is unresolvable.
+    Returns (0, 24) if the string is unparseable or covers all hours (e.g. '24/7').
+    Supports formats: 'HH:MM-HH:MM', '24/7', 'all'.
+    """
+    if not applicable_hours:
+        return 0, 24
+    cleaned = applicable_hours.strip().lower()
+    if cleaned in ('24/7', 'all', ''):
+        return 0, 24
+    try:
+        parts = cleaned.split('-')
+        if len(parts) != 2:
+            return 0, 24
+        start_h = int(parts[0].split(':')[0])
+        end_h = int(parts[1].split(':')[0])
+        return start_h, end_h
+    except (ValueError, IndexError):
+        return 0, 24
+
+
+def _rule_matches_now(rule, now=None):
+    """Check if a PricingRule's applicable_hours window covers the current hour."""
+    if now is None:
+        now = datetime.utcnow()
+    start_h, end_h = _parse_applicable_hours(rule.applicable_hours)
+    hour = now.hour
+    if start_h <= end_h:
+        return start_h <= hour < end_h
+    # Overnight window (e.g. 22:00-06:00)
+    return hour >= start_h or hour < end_h
+
+
+def calculate_fee(duration_minutes):
+    """Calculate fee, consulting pricing_rule table for a matching rule.
+
+    Rule selection strategy (deterministic):
+      1. Query all PricingRule rows.
+      2. Filter to rules whose applicable_hours window covers the current hour.
+      3. Among matches, prefer the rule with the lowest rate_id (oldest/highest priority).
+      4. If no rules match the current hour, fall back to the first rule overall.
+      5. If no rules exist or the DB is unreachable, use the hardcoded default.
+
+    Falls back to $5.00 base + $2.00/hour if no active rule is found.
     """
     try:
         from models import PricingRule
-        rule = PricingRule.query.first()
-        if rule and rule.program in PRICING_PROGRAMS:
-            return PRICING_PROGRAMS[rule.program](duration_minutes)
-    except Exception:
-        pass  # DB not available (e.g. during import) — use default
+        rules = PricingRule.query.order_by(PricingRule.rate_id).all()
+        if rules:
+            # Pick the first rule whose time window covers now
+            now = datetime.utcnow()
+            matched = next((r for r in rules if _rule_matches_now(r, now)), None)
+            rule = matched or rules[0]  # fall back to first rule if none match
+            if rule.program in PRICING_PROGRAMS:
+                return PRICING_PROGRAMS[rule.program](duration_minutes)
+            # Program name unrecognized — log and fall through to default
+            log_error('calculate_fee',
+                      f'PricingRule {rule.rate_id} has unknown program "{rule.program}"')
+    except Exception as exc:
+        # Log the failure so operators have visibility — do NOT silently swallow
+        log_error('calculate_fee',
+                  f'DB error during fee calculation, using fallback: {exc}')
     return Decimal('5.00') + Decimal('2.00') * math.ceil(duration_minutes / 60)
 
 

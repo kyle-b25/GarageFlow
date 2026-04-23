@@ -139,10 +139,11 @@ def seed_admin(password):
 # ------------------------------------------------------------------
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from tasks import expire_stale_reservations
+from tasks import expire_stale_reservations, cleanup_stale_login_attempts
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(expire_stale_reservations, 'interval', minutes=10)
+scheduler.add_job(cleanup_stale_login_attempts, 'interval', minutes=10)
 scheduler.start()
 
 
