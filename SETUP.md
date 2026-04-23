@@ -159,6 +159,11 @@ pytest tests/test_all.py::TestTicketCreation -v
 pytest tests/test_workflows.py::TestVehicleEntry::test_entry_standard_driver -v
 ```
 
+Install pytest in your venv if it is missing:
+```bash
+pip install pytest
+python -m pytest tests/test_all.py -v
+```
 ---
 
 ## Database Migrations
