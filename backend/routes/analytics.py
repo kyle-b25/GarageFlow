@@ -212,12 +212,17 @@ def occupancy():
         return jsonify({'error': 'floor_not_found',
                         'message': 'No floor found with that ID'}), 404
 
+    garage_id = request.args.get('garage_id', type=int)
+
     # --- Live counts ---------------------------------------------------
     total_q = ParkingSpot.query
     occupied_q = ParkingSpot.query.filter_by(status=SpotStatusEnum.occupied)
     if floor_id is not None:
         total_q = total_q.filter_by(floor_id=floor_id)
         occupied_q = occupied_q.filter_by(floor_id=floor_id)
+    elif garage_id is not None:
+        total_q = total_q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        occupied_q = occupied_q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
 
     total_count = total_q.count()
     occupied_count = occupied_q.count()

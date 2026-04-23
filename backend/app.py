@@ -52,6 +52,11 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/customer-portal')
+def customer_portal():
+    return render_template('customer.html')
+
+
 @app.route('/health')
 def health():
     return {'status': 'ok'}
@@ -64,7 +69,7 @@ def health():
 from routes import (
     v1_bp, tickets_bp, token_auth_bp, analytics_bp,
     payments_bp, reservations_bp, spaces_bp, staff_bp, admin_bp,
-    gates_bp, pricing_bp,
+    gates_bp, pricing_bp, customer_bp,
 )
 
 app.register_blueprint(v1_bp)
@@ -78,6 +83,7 @@ app.register_blueprint(reservations_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(gates_bp)
 app.register_blueprint(pricing_bp)
+app.register_blueprint(customer_bp)
 
 
 # ------------------------------------------------------------------

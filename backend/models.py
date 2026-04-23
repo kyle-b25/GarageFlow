@@ -395,6 +395,7 @@ class Reservation(db.Model):
     reservation_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     customer_id    = db.Column(db.Integer, db.ForeignKey("customer.customer_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5
     vehicle_id     = db.Column(db.Integer, db.ForeignKey("vehicle.vehicle_id", onupdate="CASCADE", ondelete="RESTRICT"),   nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5
+    garage_id      = db.Column(db.Integer, db.ForeignKey("garage.garage_id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # Multi-garage scoping
     phone          = db.Column(db.String(20),  nullable=True)
     driver_class   = db.Column(db.String(20),  nullable=True)
     floor_number   = db.Column(db.Integer,     nullable=True)

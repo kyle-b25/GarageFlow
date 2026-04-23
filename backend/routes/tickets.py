@@ -77,6 +77,7 @@ def post_ticket():
     license_plate = data.get('licensePlate')
     driver_class  = data.get('driverClass')
     phone         = data.get('phone')
+    garage_id     = data.get('garageId')
 
     # Validate input
     if not license_plate or not driver_class:
@@ -116,6 +117,7 @@ def post_ticket():
         spot, floor = assign_spot(
             driver_class,
             vehicle_type=vehicle.vehicle_type.value,
+            garage_id=garage_id,
         )
         if not spot:
             return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
@@ -175,6 +177,7 @@ def get_tickets():
     status_param = request.args.get('status')
     plate_param  = request.args.get('plate') or request.args.get('licensePlate')
     phone_param  = request.args.get('phone')
+    garage_id    = request.args.get('garage_id', type=int)
 
     q = Ticket.query
 
@@ -199,6 +202,12 @@ def get_tickets():
 
         if phone_param:
             q = q.filter_by(phone=phone_param)
+
+        if garage_id is not None:
+            from models import ParkingSpot, Floor
+            q = (q.join(ParkingSpot, Ticket.spot_id == ParkingSpot.spot_id)
+                   .join(Floor, ParkingSpot.floor_id == Floor.floor_id)
+                   .filter(Floor.garage_id == garage_id))
 
         tickets = q.order_by(Ticket.entry_timestamp.desc()).all()
         return jsonify([_ticket_json(t) for t in tickets]), 200

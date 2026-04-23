@@ -80,6 +80,7 @@ def post_reservation():
     driver_class      = data.get('driverClass')
     license_plate     = data.get('licensePlate')
     vehicle_id        = data.get('vehicleId')
+    garage_id         = data.get('garageId')
 
     if not phone or not scheduled_arrival:
         missing = 'phone' if not phone else 'scheduledArrival'
@@ -125,6 +126,7 @@ def post_reservation():
             effective_class,
             arrival_datetime=parsed_arrival.replace(tzinfo=None),
             vehicle_type=vehicle.vehicle_type.value if vehicle else None,
+            garage_id=garage_id,
         )
     except Exception as exc:
         db.session.rollback()
@@ -169,6 +171,7 @@ def post_reservation():
         end_datetime=end_datetime,  # Fixed: was None, now NOT NULL per schema.sq1
         customer_id=customer_id,  # Fixed: was nullable, now NOT NULL per schema.sq1
         vehicle_id=vehicle.vehicle_id,  # Fixed: was conditional None, now NOT NULL per schema.sq1
+        garage_id=floor.garage_id,  # Multi-garage scoping
         floor_number=floor.floor_number,
         quoted_fee=data.get('quotedFee', 0),  # Fixed: was None, now NOT NULL per schema.sq1
         status=ReservationStatusEnum.confirmed,
@@ -201,6 +204,7 @@ def list_reservations():
         plate_param      = request.args.get('plate')
         phone_param      = request.args.get('phone')
         include_old      = request.args.get('includeOld', 'false').lower() == 'true'
+        garage_id        = request.args.get('garage_id', type=int)
 
         q = Reservation.query
 
@@ -214,6 +218,9 @@ def list_reservations():
 
         if not include_old:
             q = q.filter(Reservation.status == ReservationStatusEnum.confirmed)
+
+        if garage_id is not None:
+            q = q.filter(Reservation.garage_id == garage_id)
 
         reservations = q.order_by(Reservation.start_datetime).all()
         return jsonify([_reservation_json(r) for r in reservations]), 200
@@ -245,7 +252,11 @@ def get_reservation(reservation_id):
 
 @reservations_bp.route('/<reservation_id>', methods=['PUT'])
 def update_reservation(reservation_id):
-    """Update reservation fields (arrival, end, status, fee, floor, vehicle, customer)."""
+    """Update a confirmed reservation's arrival time, duration, or other fields.
+
+    Only confirmed reservations can be modified (except for status transitions).
+    Time changes are validated for future dates and checked for conflicts.
+    """
     try:
         rid = _parse_reservation_id(reservation_id)
         if rid is None:
@@ -256,30 +267,67 @@ def update_reservation(reservation_id):
 
         data = request.get_json(silent=True) or {}
 
-        if 'scheduledArrival' in data:
-            try:
-                r.start_datetime = datetime.fromisoformat(
-                    data['scheduledArrival'].replace('Z', '+00:00')
-                ).replace(tzinfo=None)
-            except (ValueError, AttributeError):
-                return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival is not a valid ISO 8601 datetime'}), 400
-        if 'endDatetime' in data:
-            try:
-                r.end_datetime = datetime.fromisoformat(
-                    data['endDatetime'].replace('Z', '+00:00')
-                ).replace(tzinfo=None)
-            except (ValueError, AttributeError):
-                return jsonify({'error': 'invalid_end_datetime', 'message': 'endDatetime is not a valid ISO 8601 datetime'}), 400
+        # Status transitions are allowed from any state (per state machine)
         if 'status' in data:
             try:
                 new_status = ReservationStatusEnum(data['status'])
             except ValueError:
                 return jsonify({'error': 'invalid_status', 'message': 'Unrecognized reservation status value'}), 400
-            # Validate state transition
             allowed = ALLOWED_TRANSITIONS.get(r.status, [])
             if new_status not in allowed:
                 return jsonify({'error': 'invalid_status_transition', 'message': f'Cannot transition from {r.status.value} to {new_status.value}'}), 400
             r.status = new_status
+
+        # For field modifications, reservation must be confirmed
+        time_fields = {'scheduledArrival', 'endDatetime'}
+        other_fields = {'quotedFee', 'floorNumber', 'vehicleId', 'customerId'}
+        has_field_changes = bool(time_fields.intersection(data) or other_fields.intersection(data))
+
+        if has_field_changes and r.status != ReservationStatusEnum.confirmed:
+            return jsonify({'error': 'not_modifiable',
+                            'message': 'Only confirmed reservations can be modified'}), 409
+
+        new_start = r.start_datetime
+        new_end = r.end_datetime
+
+        if 'scheduledArrival' in data:
+            try:
+                new_start = datetime.fromisoformat(
+                    data['scheduledArrival'].replace('Z', '+00:00')
+                ).replace(tzinfo=None)
+            except (ValueError, AttributeError):
+                return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival is not a valid ISO 8601 datetime'}), 400
+            if new_start <= datetime.utcnow():
+                return jsonify({'error': 'invalid_scheduled_arrival', 'message': 'scheduledArrival must be in the future'}), 400
+
+        if 'endDatetime' in data:
+            try:
+                new_end = datetime.fromisoformat(
+                    data['endDatetime'].replace('Z', '+00:00')
+                ).replace(tzinfo=None)
+            except (ValueError, AttributeError):
+                return jsonify({'error': 'invalid_end_datetime', 'message': 'endDatetime is not a valid ISO 8601 datetime'}), 400
+
+        # Validate end > start
+        if new_end <= new_start:
+            return jsonify({'error': 'invalid_time_range', 'message': 'endDatetime must be after scheduledArrival'}), 400
+
+        # Conflict check if times changed
+        if 'scheduledArrival' in data or 'endDatetime' in data:
+            conflict = Reservation.query.filter(
+                Reservation.reservation_id != r.reservation_id,
+                Reservation.status == ReservationStatusEnum.confirmed,
+                Reservation.floor_number == r.floor_number,
+                Reservation.driver_class == r.driver_class,
+                Reservation.start_datetime < new_end,
+                Reservation.end_datetime > new_start,
+            ).first()
+            if conflict:
+                return jsonify({'error': 'reservation_conflict',
+                                'message': 'Time change conflicts with another reservation'}), 409
+            r.start_datetime = new_start
+            r.end_datetime = new_end
+
         if 'quotedFee' in data:
             r.quoted_fee = data['quotedFee']
         if 'floorNumber' in data:
