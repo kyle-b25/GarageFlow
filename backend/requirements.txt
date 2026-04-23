@@ -19,3 +19,8 @@ Flask-Migrate==4.1.0
 flask-cors==5.0.1
 alembic==1.18.4
 Mako==1.3.11
+flasgger>=0.9.7
+sendgrid>=6.0
+twilio>=8.0
+pytest>=8.0
+pytest-cov>=6.0

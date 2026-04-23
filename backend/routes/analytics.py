@@ -87,10 +87,14 @@ def utilization():
         return jsonify({'error': 'floor_not_found',
                         'message': 'No floor found with that ID'}), 404
 
+    garage_id = request.args.get('garage_id', type=int)
+
     # Total spots for the denominator
     total_q = db.session.query(func.count(ParkingSpot.spot_id))
     if floor_id is not None:
         total_q = total_q.filter(ParkingSpot.floor_id == floor_id)
+    elif garage_id is not None:
+        total_q = total_q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
     total_spots = total_q.scalar() or 0
 
     range_days = (end_dt - start_dt).days
@@ -223,7 +227,11 @@ def occupancy():
     # Per-floor breakdown (skip when a single floor was requested)
     by_floor = []
     if floor_id is None:
-        floors = Floor.query.order_by(Floor.floor_number).all()
+        floor_q = Floor.query.order_by(Floor.floor_number)
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            floor_q = floor_q.filter(Floor.garage_id == garage_id)
+        floors = floor_q.all()
         for f in floors:
             occ = f.total_spots - f.available_spots
             by_floor.append({
@@ -331,14 +339,22 @@ def peak_hours():
     num_days = max((end_dt - start_dt).days, 1)
 
     # SQL aggregation: count occupied events grouped by hour-of-day
-    rows = db.session.query(
+    peak_q = db.session.query(
         func.cast(func.strftime('%H', OccupancyLog.changed_at), db.Integer).label('hour'),
         func.count().label('total_entries'),
     ).filter(
         OccupancyLog.changed_at >= start_dt,
         OccupancyLog.changed_at <= end_dt,
         OccupancyLog.change_type == OccupancyChangeEnum.occupied,
-    ).group_by('hour').all()
+    )
+    garage_id = request.args.get('garage_id', type=int)
+    if garage_id is not None:
+        from models import ParkingSpot, Floor
+        peak_q = (peak_q
+                  .join(ParkingSpot, OccupancyLog.spot_id == ParkingSpot.spot_id)
+                  .join(Floor, ParkingSpot.floor_id == Floor.floor_id)
+                  .filter(Floor.garage_id == garage_id))
+    rows = peak_q.group_by('hour').all()
 
     counts = {h: 0 for h in range(24)}
     for hour, total in rows:

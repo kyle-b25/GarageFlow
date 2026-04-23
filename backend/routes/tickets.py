@@ -112,8 +112,11 @@ def post_ticket():
         if Ticket.query.filter_by(vehicle_id=vehicle.vehicle_id, status=TicketStatusEnum.active).first():
             return jsonify({'error': 'duplicate_plate', 'message': 'Vehicle already has an active ticket'}), 409
 
-        # Assign spot (prefers lowest floor number)
-        spot, floor = assign_spot(driver_class)
+        # Assign spot (prefers lowest floor number, filtered by vehicle type)
+        spot, floor = assign_spot(
+            driver_class,
+            vehicle_type=vehicle.vehicle_type.value,
+        )
         if not spot:
             return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
 
@@ -304,6 +307,14 @@ def put_ticket_exit(ticket_id):
         db.session.rollback()
         log_error('tickets.put_ticket_exit', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to process exit'}), 500
+
+    # Send payment receipt notification (best-effort)
+    try:
+        from notifications import notify_payment_receipt
+        if ticket.payment:
+            notify_payment_receipt(ticket, ticket.payment)
+    except Exception:
+        pass
 
     return jsonify({
         'ticketId':      ticket.ticket_id,

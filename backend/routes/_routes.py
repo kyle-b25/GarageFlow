@@ -64,12 +64,17 @@ def _count_spots(spots):
 
 @v1_bp.route('/capacity', methods=['GET'])
 def get_capacity():
-    """Return total, occupied, and available spot counts by type."""
+    """Return total, occupied, and available spot counts by type.
+    Optional query param: garage_id — restrict to a single garage."""
     from app import db
-    from models import ParkingSpot
+    from models import ParkingSpot, Floor
 
     try:
-        spots = ParkingSpot.query.all()
+        q = ParkingSpot.query
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        spots = q.all()
         total, occupied, available, by_type = _count_spots(spots)
 
         return jsonify({
@@ -90,12 +95,17 @@ def get_capacity():
 
 @v1_bp.route('/capacity/status', methods=['GET'])
 def get_capacity_status():
-    """Return available spot counts by type."""
+    """Return available spot counts by type.
+    Optional query param: garage_id — restrict to a single garage."""
     from app import db
-    from models import ParkingSpot, SpotTypeEnum, SpotStatusEnum
+    from models import ParkingSpot, SpotTypeEnum, SpotStatusEnum, Floor
 
     try:
-        spots = ParkingSpot.query.filter_by(status=SpotStatusEnum.available).all()
+        q = ParkingSpot.query.filter_by(status=SpotStatusEnum.available)
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        spots = q.all()
 
         counts = {st.value: 0 for st in SpotTypeEnum}
         for spot in spots:
@@ -178,12 +188,17 @@ _CONGESTION_THRESHOLD = float(os.getenv('CONGESTION_THRESHOLD', '0.85'))
 
 @v1_bp.route('/capacity/alert', methods=['GET'])
 def capacity_alert():
-    """Return congestion alert state based on configurable threshold."""
+    """Return congestion alert state based on configurable threshold.
+    Optional query param: garage_id — restrict to a single garage."""
     from app import db
-    from models import ParkingSpot
+    from models import ParkingSpot, Floor
 
     try:
-        spots = ParkingSpot.query.all()
+        q = ParkingSpot.query
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        spots = q.all()
         total, occupied, available, _ = _count_spots(spots)
         rate = occupied / total if total > 0 else 0
         alert = rate >= _CONGESTION_THRESHOLD

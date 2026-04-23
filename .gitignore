@@ -5,3 +5,5 @@ instance/
 backend/instance/
 CLAUDE.md
 .claude/
+coverage_html/
+.coverage

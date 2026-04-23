@@ -215,6 +215,15 @@ _SPOT_TYPE_TO_DRIVER_CLASSES = {}
 for _dc, _st in _DRIVER_CLASS_TO_SPOT_TYPE.items():
     _SPOT_TYPE_TO_DRIVER_CLASSES.setdefault(_st, set()).add(_dc)
 
+# Vehicle type → compatible spot types.  Motorcycles fit anywhere a car
+# fits; trucks are restricted to standard-sized spots only (no compact
+# accessibility or staff/eco spots which are typically smaller bays).
+_VEHICLE_TYPE_COMPATIBLE_SPOTS = {
+    'car':        {'standard', 'accessibility', 'staff', 'eco'},
+    'motorcycle': {'standard', 'accessibility', 'staff', 'eco'},
+    'truck':      {'standard'},
+}
+
 
 # ------------------------------------------------------------------
 #  Spot assignment exceptions
@@ -238,7 +247,7 @@ class ReservationConflictError(Exception):
     error_key = "reservation_conflict"
 
 
-def assign_spot(driver_class, arrival_datetime=None):
+def assign_spot(driver_class, arrival_datetime=None, vehicle_type=None, garage_id=None):
     """
     Find the best available (spot, floor) pair for the given driver class.
 
@@ -246,6 +255,15 @@ def assign_spot(driver_class, arrival_datetime=None):
     When arrival_datetime is provided, candidate spots are checked against
     confirmed reservations within a ±30-minute window; floors where all
     spots of the requested type conflict are skipped.
+
+    Args:
+        driver_class:     One of VALID_DRIVER_CLASSES.
+        arrival_datetime: Optional naive-UTC datetime for conflict checks.
+        vehicle_type:     Optional VehicleTypeEnum value string ('car',
+                          'motorcycle', 'truck').  When provided, only spots
+                          whose type is compatible with the vehicle size are
+                          considered.
+        garage_id:        Optional int — restrict search to a single garage.
 
     Returns (spot, floor) on success, or (None, None) if garage is full.
     """
@@ -256,8 +274,17 @@ def assign_spot(driver_class, arrival_datetime=None):
 
     spot_type_val = SpotTypeEnum(_DRIVER_CLASS_TO_SPOT_TYPE[driver_class])
 
-    floors = [f for f in Floor.query.filter(Floor.available_spots > 0).all()
-              if f.total_spots > 0]
+    # If vehicle_type is specified, verify the requested spot type is
+    # compatible with the vehicle.  If not, return early.
+    if vehicle_type:
+        compatible = _VEHICLE_TYPE_COMPATIBLE_SPOTS.get(vehicle_type)
+        if compatible and spot_type_val.value not in compatible:
+            return None, None
+
+    floor_q = Floor.query.filter(Floor.available_spots > 0)
+    if garage_id is not None:
+        floor_q = floor_q.filter(Floor.garage_id == garage_id)
+    floors = [f for f in floor_q.all() if f.total_spots > 0]
     if not floors:
         return None, None
 

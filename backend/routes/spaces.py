@@ -52,9 +52,13 @@ def _sync_garage(garage):
 
 @spaces_bp.route('/spaces', methods=['GET'])
 def list_spaces():
-    """List all parking spaces."""
+    """List all parking spaces. Optional query param: garage_id."""
     try:
-        spots = ParkingSpot.query.all()
+        q = ParkingSpot.query
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        spots = q.all()
         return jsonify([_space_json(s) for s in spots]), 200
     except Exception as exc:
         log_error('spaces.list_spaces', str(exc))
@@ -63,9 +67,12 @@ def list_spaces():
 
 @spaces_bp.route('/spaces/available', methods=['GET'])
 def list_available_spaces():
-    """List available parking spaces, optionally filtered by spot type."""
+    """List available parking spaces, optionally filtered by spot type and garage_id."""
     try:
         q = ParkingSpot.query.filter(ParkingSpot.status == SpotStatusEnum.available)
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
         type_param = request.args.get('type')
         if type_param:
             try:
@@ -84,9 +91,13 @@ def list_available_spaces():
 
 @spaces_bp.route('/floors', methods=['GET'])
 def list_floors():
-    """List all floors."""
+    """List all floors. Optional query param: garage_id."""
     try:
-        floors = Floor.query.all()
+        q = Floor.query
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.filter(Floor.garage_id == garage_id)
+        floors = q.all()
         return jsonify([_floor_json(f) for f in floors]), 200
     except Exception as exc:
         log_error('spaces.list_floors', str(exc))
