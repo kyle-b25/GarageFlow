@@ -610,14 +610,15 @@ async function refreshDashboard() {
   }
 
   try {
-    const util = await getUtilization(dashToken, from, to);
-    const utilEl = document.getElementById('dash-util');
-    utilEl.innerHTML = util.days.map(d =>
-      `<div style="display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px solid var(--border);">` +
-      `<span>${d.date}</span><span>${d.entries} in / ${d.exits} out</span></div>`
-    ).join('');
-  } catch (_e) {
-    document.getElementById('dash-util').textContent = 'Could not load utilization data.';
+    const occ = await getOccupancy(dashToken);
+	const utilEl = document.getElementById('dash-util');
+	const last7 = (occ.trend || []).slice(-7);
+	utilEl.innerHTML = last7.slice().reverse().map(d =>
+	`<div style="display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px solid var(--border);">` +
+	`<span>${d.date}</span><span>${d.occupied} occupied (${d.utilizationRate}%)</span></div>`
+	).join('') || 'No data for this period';
+	} catch (_e) {
+		document.getElementById('dash-util').textContent = 'Could not load utilization data.';
   }
 
   try {
