@@ -30,6 +30,8 @@ import {
   changeUserStatus,
   getAuditHistory,
   createGarageAPI,
+  updateGarageAPI,
+  deleteGarageAPI,
   setAuthState,
   getStoredToken,
   clearAuthState,
@@ -94,6 +96,58 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
+// ── Input validation helpers ──────────────────────────────────────
+// Basic format checks — not exhaustive, but catch obvious typos.
+
+// ── Modal helper (replaces prompt/confirm for production UX) ──────
+function showModal(title, body, { placeholder = 'e.g. ABC-1234', validate = null } = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('gf-modal-overlay');
+    const input   = document.getElementById('gf-modal-input');
+    const errEl   = document.getElementById('gf-modal-input-error');
+
+    document.getElementById('gf-modal-title').textContent = title;
+    document.getElementById('gf-modal-body').textContent  = body;
+    input.value = '';
+    input.placeholder = placeholder;
+    errEl.style.display = 'none';
+    overlay.style.display = 'flex';
+    input.focus();
+
+    function cleanup() {
+      overlay.style.display = 'none';
+      document.getElementById('gf-modal-cancel').onclick = null;
+      document.getElementById('gf-modal-confirm').onclick = null;
+      input.onkeydown = null;
+    }
+
+    document.getElementById('gf-modal-cancel').onclick = () => { cleanup(); resolve(null); };
+
+    function tryConfirm() {
+      const val = input.value.trim();
+      if (!val) { errEl.textContent = 'This field is required.'; errEl.style.display = 'block'; return; }
+      if (validate && !validate(val)) { errEl.textContent = 'Invalid format.'; errEl.style.display = 'block'; return; }
+      cleanup();
+      resolve(val);
+    }
+
+    document.getElementById('gf-modal-confirm').onclick = tryConfirm;
+    input.onkeydown = (e) => { if (e.key === 'Enter') tryConfirm(); if (e.key === 'Escape') { cleanup(); resolve(null); } };
+  });
+}
+
+/** License plate: 2-10 alphanumeric chars, optional hyphens/spaces */
+const PLATE_RE = /^[A-Za-z0-9][A-Za-z0-9 \-]{0,8}[A-Za-z0-9]$/;
+function isValidPlate(v) { return PLATE_RE.test(v.trim()); }
+
+/** Phone: E.164 (+1...), US 10-digit, or dashed (001-555-0000) */
+const PHONE_RE = /^(\+?\d{1,3}[\-\s]?)?\(?\d{2,4}\)?[\-\s]?\d{3,4}[\-\s]?\d{3,4}$/;
+function isValidPhone(v) { return PHONE_RE.test(v.trim()); }
+
+/** Operating hours: HH:MM-HH:MM or 24/7 */
+const HOURS_RE = /^(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}|24\/7)$/i;
+function isValidHours(v) { return HOURS_RE.test(v.trim()); }
+
 
 // =============================================================
 //  GARAGE ENTRY  —  POST /v1/tickets
@@ -104,6 +158,7 @@ async function handleEntryFinish() {
   const driverClass = document.getElementById('vehicle-type').value;
 
   if (!plate)       { alert('Please enter a license plate number.'); return; }
+  if (!isValidPlate(plate)) { alert('Invalid plate format. Use 2-10 letters/numbers (hyphens OK).'); return; }
   if (!driverClass) { alert('Please select a driver class.'); return; }
 
   const btn = document.getElementById('btn-entry-submit');
@@ -136,6 +191,7 @@ let _exitTicketData = null;  // stashed after lookup
 async function handleExitLookup() {
   const plate = document.getElementById('exit-plate').value.trim();
   if (!plate) { alert('Please enter a license plate number.'); return; }
+  if (!isValidPlate(plate)) { alert('Invalid plate format. Use 2-10 letters/numbers (hyphens OK).'); return; }
 
   const btn = document.getElementById('btn-exit-lookup');
   setLoading(btn, true);
@@ -301,11 +357,13 @@ async function handleResFinish() {
   hideFeedback(feedback);
 
   if (!phone)       { showFeedback(feedback, 'Phone number is required.', true); return; }
+  if (!isValidPhone(phone)) { showFeedback(feedback, 'Invalid phone format. Use digits with optional country code (e.g. 001-555-0000).', true); return; }
   if (!arrivalDate || !arrivalTime) {
     showFeedback(feedback, 'Scheduled arrival date and time are required.', true);
     return;
   }
   if (!licensePlate) { showFeedback(feedback, 'License plate is required.', true); return; }
+  if (!isValidPlate(licensePlate)) { showFeedback(feedback, 'Invalid plate format. Use 2-10 letters/numbers (hyphens OK).', true); return; }
 
   const scheduledArrival = toISO(arrivalDate, arrivalTime);
 
@@ -340,6 +398,7 @@ async function searchRes() {
   const showOld  = document.getElementById('chk-old').checked;
 
   if (!phone) { alert('Please enter a phone number to search.'); return; }
+  if (!isValidPhone(phone)) { alert('Invalid phone format. Use digits with optional country code.'); return; }
 
   const btn = document.getElementById('btn-res-search');
   setLoading(btn, true);
@@ -400,13 +459,16 @@ function renderTable(rows) {
 window._resCheckIn = async function(idx) {
   const r = _lastResRows[idx];
   if (!r) return;
-  const plate = prompt(`Check-in reservation ${r.reservationId}\nEnter the vehicle license plate to confirm:`);
+  const plate = await showModal(
+    `Check In: ${r.reservationId}`,
+    'Enter the vehicle license plate to confirm check-in.',
+    { validate: isValidPlate }
+  );
   if (!plate) return;
 
   try {
-    const res = await checkInReservation(r.reservationId, plate.trim());
+    const res = await checkInReservation(r.reservationId, plate);
     alert(`Checked in! Ticket #${res.ticketId} created — Floor ${res.assignedFloor}, Spot ${res.spotId}`);
-    // Refresh table
     const phone = document.getElementById('search-val').value.trim();
     if (phone) searchRes(); else showUpcoming();
   } catch (err) {
@@ -417,12 +479,15 @@ window._resCheckIn = async function(idx) {
 window._resCancel = async function(idx) {
   const r = _lastResRows[idx];
   if (!r) return;
-  if (!confirm(`Cancel reservation ${r.reservationId}?`)) return;
-  const plate = prompt('Enter the vehicle license plate to confirm cancellation:');
+  const plate = await showModal(
+    `Cancel: ${r.reservationId}`,
+    'Enter the vehicle license plate to confirm cancellation.',
+    { validate: isValidPlate }
+  );
   if (!plate) return;
 
   try {
-    await cancelReservation(r.reservationId, plate.trim(), r.phone);
+    await cancelReservation(r.reservationId, plate, r.phone);
     alert(`Reservation ${r.reservationId} cancelled.`);
     const phone = document.getElementById('search-val').value.trim();
     if (phone) searchRes(); else showUpcoming();
@@ -578,7 +643,8 @@ function switchTab(tabId) {
 
   // Lazy-load tab data
   if (tabId === 'tab-staff') loadStaffList();
-  if (tabId === 'tab-audit') loadAuditHistory();
+  if (tabId === 'tab-audit') loadAuditHistory(1);
+  if (tabId === 'tab-config') loadGarageConfig();
 }
 
 
@@ -725,29 +791,55 @@ async function handleCreateStaff() {
 //  DASHBOARD — Audit History
 // =============================================================
 
-async function loadAuditHistory() {
+let _auditPage = 1;
+const _AUDIT_LIMIT = 50;
+
+async function loadAuditHistory(page = 1) {
+  _auditPage = page;
   const container = document.getElementById('audit-list');
   const actionFilter = document.getElementById('audit-action').value.trim();
+  const fromDate = document.getElementById('audit-from')?.value || '';
+  const toDate = document.getElementById('audit-to')?.value || '';
   container.innerHTML = '<div style="color:var(--text-muted);">Loading...</div>';
 
   try {
-    const params = {};
+    const params = { page, limit: _AUDIT_LIMIT };
     if (actionFilter) params.action = actionFilter;
-    const events = await getAuditHistory(params);
+    if (fromDate) params.from = new Date(fromDate).toISOString();
+    if (toDate) params.to = new Date(toDate + 'T23:59:59').toISOString();
+
+    const data = await getAuditHistory(params);
+    // Support both old (array) and new (paginated object) response shapes
+    const events = Array.isArray(data) ? data : (data.events || []);
+    const total = data.total || events.length;
+    const totalPages = Math.ceil(total / _AUDIT_LIMIT) || 1;
+
     if (!events.length) { container.innerHTML = 'No audit events found.'; return; }
-    container.innerHTML = `
-      <table><thead><tr>
-        <th>ID</th><th>Source</th><th>Description</th><th>Staff ID</th><th>Time</th>
-      </tr></thead><tbody>
-      ${events.slice(0, 100).map(e => `
+    const rows = events.map(e => `
         <tr>
           <td>${e.eventId}</td>
           <td>${escapeHtml(e.source)}</td>
           <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(e.description)}</td>
           <td>${e.staffId || '—'}</td>
           <td>${e.createdAt ? new Date(e.createdAt).toLocaleString() : '—'}</td>
-        </tr>`).join('')}
-      </tbody></table>`;
+        </tr>`).join('');
+
+    const prevDisabled = page <= 1 ? 'disabled' : '';
+    const nextDisabled = page >= totalPages ? 'disabled' : '';
+    container.innerHTML = `
+      <table><thead><tr>
+        <th>ID</th><th>Source</th><th>Description</th><th>Staff ID</th><th>Time</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; font-size:13px; color:var(--text-muted);">
+        <span>Page ${page} of ${totalPages} (${total} total)</span>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-secondary btn-sm" id="audit-prev" ${prevDisabled}>Prev</button>
+          <button class="btn btn-secondary btn-sm" id="audit-next" ${nextDisabled}>Next</button>
+        </div>
+      </div>`;
+
+    document.getElementById('audit-prev')?.addEventListener('click', () => loadAuditHistory(page - 1));
+    document.getElementById('audit-next')?.addEventListener('click', () => loadAuditHistory(page + 1));
   } catch (err) {
     container.innerHTML = `<div style="color:var(--danger);">Failed to load audit log: ${err.message}</div>`;
   }
@@ -758,6 +850,78 @@ async function loadAuditHistory() {
 //  DASHBOARD — Garage Config
 // =============================================================
 
+let _editingGarageId = null;
+
+async function loadGarageConfig() {
+  const currentSection = document.getElementById('cfg-current');
+  try {
+    const g = await getGarage();
+    if (!g) { currentSection.style.display = 'none'; return; }
+    currentSection.style.display = 'block';
+    document.getElementById('cfg-current-info').innerHTML = `
+      <div class="zone-row"><span class="zone-key">Name</span><span class="zone-val">${escapeHtml(g.name)}</span></div>
+      <div class="zone-row"><span class="zone-key">ID</span><span class="zone-val">${g.garageId}</span></div>
+      <div class="zone-row"><span class="zone-key">Total Capacity</span><span class="zone-val">${g.totalCapacity}</span></div>
+      <div class="zone-row"><span class="zone-key">Floors</span><span class="zone-val">${g.numberOfFloors}</span></div>
+      <div class="zone-row"><span class="zone-key">Operating Hours</span><span class="zone-val">${escapeHtml(g.operatingHours)}</span></div>
+      <div class="zone-row"><span class="zone-key">Phone</span><span class="zone-val">${escapeHtml(g.frontDeskPhone || '—')}</span></div>`;
+    // Store for edit/delete
+    currentSection.dataset.garageId = g.garageId;
+  } catch (_e) {
+    currentSection.style.display = 'none';
+  }
+}
+
+function startEditGarage() {
+  const currentSection = document.getElementById('cfg-current');
+  const garageId = currentSection.dataset.garageId;
+  if (!garageId) return;
+  _editingGarageId = garageId;
+
+  // Pre-fill form from current display
+  const info = currentSection.querySelector('#cfg-current-info');
+  const vals = info.querySelectorAll('.zone-val');
+  document.getElementById('cfg-name').value = vals[0]?.textContent || '';
+  document.getElementById('cfg-capacity').value = vals[2]?.textContent || '';
+  document.getElementById('cfg-floors').value = vals[3]?.textContent || '';
+  document.getElementById('cfg-hours').value = vals[4]?.textContent || '';
+
+  document.getElementById('cfg-form-title').textContent = 'Edit Garage';
+  document.getElementById('btn-cfg-create').textContent = 'Save Changes';
+  document.getElementById('btn-cfg-create').dataset.label = 'Save Changes';
+  document.getElementById('btn-cfg-cancel-edit').style.display = '';
+}
+
+function cancelEditGarage() {
+  _editingGarageId = null;
+  document.getElementById('cfg-form-title').textContent = 'Create Garage';
+  document.getElementById('btn-cfg-create').textContent = 'Create Garage';
+  document.getElementById('btn-cfg-create').dataset.label = 'Create Garage';
+  document.getElementById('btn-cfg-cancel-edit').style.display = 'none';
+  document.getElementById('cfg-name').value = '';
+  document.getElementById('cfg-capacity').value = '';
+  document.getElementById('cfg-floors').value = '';
+  document.getElementById('cfg-hours').value = '';
+}
+
+async function handleDeleteGarage() {
+  const currentSection = document.getElementById('cfg-current');
+  const garageId = currentSection.dataset.garageId;
+  if (!garageId) return;
+  if (!confirm('Delete this garage? This will cascade to all floors and spots.')) return;
+
+  const result = document.getElementById('cfg-result');
+  try {
+    await deleteGarageAPI(garageId);
+    showFeedback(result, 'Garage deleted.', false);
+    currentSection.style.display = 'none';
+    cancelEditGarage();
+    loadGarageName();
+  } catch (err) {
+    showFeedback(result, `Delete failed: ${err.message}`, true);
+  }
+}
+
 async function handleCreateGarage() {
   const name = document.getElementById('cfg-name').value.trim();
   const capacity = parseInt(document.getElementById('cfg-capacity').value, 10);
@@ -765,20 +929,29 @@ async function handleCreateGarage() {
   const hours = document.getElementById('cfg-hours').value.trim();
 
   if (!name || !capacity || !floors || !hours) { alert('All fields are required.'); return; }
+  if (!isValidHours(hours)) { alert('Invalid hours format. Use HH:MM-HH:MM or 24/7.'); return; }
 
   const btn = document.getElementById('btn-cfg-create');
   setLoading(btn, true);
   const result = document.getElementById('cfg-result');
   result.style.display = 'none';
   try {
-    const g = await createGarageAPI({
-      name, totalCapacity: capacity, numberOfFloors: floors, operatingHours: hours,
-    });
-    showFeedback(result, `Garage "${g.name}" created (ID: ${g.garageId}).`, false);
+    const payload = { name, totalCapacity: capacity, numberOfFloors: floors, operatingHours: hours };
+    let g;
+    if (_editingGarageId) {
+      g = await updateGarageAPI(_editingGarageId, payload);
+      showFeedback(result, `Garage "${g.name}" updated.`, false);
+      cancelEditGarage();
+    } else {
+      g = await createGarageAPI(payload);
+      showFeedback(result, `Garage "${g.name}" created (ID: ${g.garageId}).`, false);
+    }
     document.getElementById('cfg-name').value = '';
     document.getElementById('cfg-capacity').value = '';
     document.getElementById('cfg-floors').value = '';
     document.getElementById('cfg-hours').value = '';
+    loadGarageConfig();
+    loadGarageName();
   } catch (err) {
     showFeedback(result, `Failed: ${err.message}`, true);
   } finally {
@@ -868,4 +1041,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Garage config
   document.getElementById('btn-cfg-create')
     .addEventListener('click', handleCreateGarage);
+  document.getElementById('btn-cfg-edit')
+    .addEventListener('click', startEditGarage);
+  document.getElementById('btn-cfg-delete')
+    .addEventListener('click', handleDeleteGarage);
+  document.getElementById('btn-cfg-cancel-edit')
+    .addEventListener('click', cancelEditGarage);
 });

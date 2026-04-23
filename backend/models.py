@@ -296,7 +296,7 @@ class SessionToken(db.Model):
     __tablename__ = "session_token"
 
     id         = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    staff_id   = db.Column(db.Integer, db.ForeignKey('staff.operator_id'), nullable=False)
+    staff_id   = db.Column(db.Integer, db.ForeignKey('staff.operator_id', ondelete='CASCADE'), nullable=False)  # CASCADE: deleting staff removes their tokens
     token      = db.Column(db.String(64), unique=True, nullable=False, index=True)
     created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
     expires_at = db.Column(db.DateTime, nullable=False)

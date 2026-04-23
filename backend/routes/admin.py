@@ -14,7 +14,7 @@ import bcrypt
 from flask import Blueprint, jsonify, request, g
 
 from app import db
-from models import Staff, StaffRoleEnum, SystemEvent
+from models import Staff, StaffRoleEnum, SystemEvent, SessionToken
 from utils import require_role, safe_int, log_error
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/v1')
@@ -167,8 +167,14 @@ def change_password(user_id):
         user.password_hash = bcrypt.hashpw(
             password.encode('utf-8'), bcrypt.gensalt()
         ).decode('utf-8')
+        # Revoke all active sessions for this user — matches /auth/change-password
+        # behavior. Atomic: both password update and token revocation commit together.
+        SessionToken.query.filter(
+            SessionToken.staff_id == user_id,
+            SessionToken.is_active == True,
+        ).update({'is_active': False})
         _audit('admin_bp.password_change',
-               f'Password changed for operator_id={user_id}',
+               f'Password changed for operator_id={user_id}; all sessions revoked',
                staff_id=user_id)
         db.session.commit()
         return jsonify({'message': 'password updated'}), 200
@@ -217,7 +223,16 @@ def change_status(user_id):
 @admin_bp.route('/admin/history', methods=['GET'])
 @require_role('admin')
 def get_history():
-    """Query the audit log with optional filters for userId, action, and date."""
+    """Query the audit log with optional filters and pagination.
+
+    Query params:
+      userId  — filter by staff ID
+      action  — substring match on source field
+      from    — ISO 8601 lower bound on created_at
+      to      — ISO 8601 upper bound on created_at
+      page    — 1-based page number (default 1)
+      limit   — results per page (default 50, max 200)
+    """
     try:
         q = SystemEvent.query
 
@@ -240,8 +255,30 @@ def get_history():
                 return jsonify({'error': 'invalid_date_format', 'message': 'from must be a valid ISO 8601 datetime'}), 400
             q = q.filter(SystemEvent.created_at >= dt)
 
-        events = q.order_by(SystemEvent.event_id.desc()).all()
-        return jsonify([_event_json(e) for e in events]), 200
+        to_date = request.args.get('to')
+        if to_date:
+            try:
+                dt = datetime.fromisoformat(to_date)
+            except ValueError:
+                return jsonify({'error': 'invalid_date_format', 'message': 'to must be a valid ISO 8601 datetime'}), 400
+            q = q.filter(SystemEvent.created_at <= dt)
+
+        # Pagination
+        page = max(int(request.args.get('page', 1)), 1)
+        limit = min(int(request.args.get('limit', 50)), 200)
+
+        total = q.count()
+        events = (q.order_by(SystemEvent.event_id.desc())
+                   .offset((page - 1) * limit)
+                   .limit(limit)
+                   .all())
+
+        return jsonify({
+            'events': [_event_json(e) for e in events],
+            'page': page,
+            'limit': limit,
+            'total': total,
+        }), 200
     except Exception as exc:
         log_error('admin.get_history', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch history'}), 500

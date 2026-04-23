@@ -417,10 +417,13 @@ class TestBugUpdateFloorCounter:
         assert floor.available_spots == 4
         assert floor.total_spots == 4
 
+        # Floor CRUD now requires admin auth (Fix 5)
+        token = create_staff_token('admin')
+
         # Reduce totalSpots to 2 (no spots occupied)
         resp = seeded_client.put(f'/v1/floors/{floor.floor_id}', json={
             'totalSpots': 2,
-        })
+        }, headers=auth_header(token))
         assert resp.status_code == 200
 
         db.session.refresh(floor)

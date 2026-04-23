@@ -255,6 +255,84 @@ def create_garage():
 
 
 # ------------------------------------------------------------------
+#  PUT /v1/garage/<id> — Update garage configuration
+# ------------------------------------------------------------------
+
+@v1_bp.route('/garage/<int:garage_id>', methods=['PUT'])
+def update_garage(garage_id):
+    """Update an existing garage's configuration."""
+    from app import db
+    from models import Garage
+    from utils import get_current_user
+    from models import StaffRoleEnum
+
+    user = get_current_user()
+    if not user or user.role != StaffRoleEnum.admin:
+        return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
+
+    try:
+        garage = Garage.query.get(garage_id)
+        if not garage:
+            return jsonify({'error': 'garage_not_found', 'message': 'No garage found with that ID'}), 404
+
+        data = request.get_json(silent=True) or {}
+        if 'name' in data:
+            garage.name = data['name']
+        if 'totalCapacity' in data:
+            garage.total_capacity = data['totalCapacity']
+        if 'numberOfFloors' in data:
+            garage.number_of_floors = data['numberOfFloors']
+        if 'operatingHours' in data:
+            garage.operating_hours = data['operatingHours']
+        if 'frontDeskPhone' in data:
+            garage.front_desk_phone = data['frontDeskPhone']
+
+        db.session.commit()
+        return jsonify({
+            'garageId': garage.garage_id,
+            'name': garage.name,
+            'totalCapacity': garage.total_capacity,
+            'numberOfFloors': garage.number_of_floors,
+            'operatingHours': garage.operating_hours,
+            'frontDeskPhone': garage.front_desk_phone,
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        log_error('routes.update_garage', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to update garage'}), 500
+
+
+# ------------------------------------------------------------------
+#  DELETE /v1/garage/<id> — Delete garage configuration
+# ------------------------------------------------------------------
+
+@v1_bp.route('/garage/<int:garage_id>', methods=['DELETE'])
+def delete_garage(garage_id):
+    """Delete a garage. Cascades to floors, spots, gates."""
+    from app import db
+    from models import Garage
+    from utils import get_current_user
+    from models import StaffRoleEnum
+
+    user = get_current_user()
+    if not user or user.role != StaffRoleEnum.admin:
+        return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
+
+    try:
+        garage = Garage.query.get(garage_id)
+        if not garage:
+            return jsonify({'error': 'garage_not_found', 'message': 'No garage found with that ID'}), 404
+
+        db.session.delete(garage)
+        db.session.commit()
+        return jsonify({'message': 'Garage deleted'}), 200
+    except Exception as exc:
+        db.session.rollback()
+        log_error('routes.delete_garage', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to delete garage'}), 500
+
+
+# ------------------------------------------------------------------
 #  Stripe webhook helpers
 # ------------------------------------------------------------------
 

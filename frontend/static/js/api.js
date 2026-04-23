@@ -365,3 +365,13 @@ export async function getAuditHistory(params = {}) {
 export async function createGarageAPI(data) {
   return _authRetry('POST', '/v1/garage', data);
 }
+
+/** PUT /v1/garage/{id} — update garage configuration (admin). */
+export async function updateGarageAPI(garageId, data) {
+  return _authRetry('PUT', `/v1/garage/${garageId}`, data);
+}
+
+/** DELETE /v1/garage/{id} — delete garage (admin). */
+export async function deleteGarageAPI(garageId) {
+  return _authRetry('DELETE', `/v1/garage/${garageId}`);
+}
