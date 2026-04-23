@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GarageFlow — Customer Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #1a1d23;
+    --surface: #22262f;
+    --surface2: #2a2f3a;
+    --border: #3a3f4d;
+    --accent: #f0a500;
+    --accent2: #e05a00;
+    --text: #e8eaf0;
+    --text-muted: #8a90a0;
+    --text-dim: #5a6070;
+    --input-bg: #141720;
+    --success: #2ecc71;
+    --danger: #e74c3c;
+    --radius: 6px;
+    --shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  .header {
+    background: #0f1116;
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 32px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .header-right {
+    display: flex; align-items: center; gap: 12px;
+    font-size: 14px; color: var(--text-muted);
+  }
+
+  .container {
+    max-width: 900px;
+    margin: 24px auto;
+    padding: 0 16px;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+  }
+  .panel-title {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  label {
+    font-size: 13px; font-weight: 500;
+    color: var(--text-muted);
+    display: block; margin-bottom: 5px;
+  }
+  input, select {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    padding: 8px 12px;
+    width: 100%;
+    appearance: none;
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(240,165,0,0.15);
+  }
+  select option { background: var(--surface2); }
+  .field { margin-bottom: 14px; }
+
+  .btn {
+    display: inline-flex; align-items: center;
+    justify-content: center; gap: 6px;
+    padding: 10px 24px; border-radius: var(--radius);
+    border: none; font-family: 'DM Sans', sans-serif;
+    font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #fff;
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn-secondary {
+    background: var(--surface2); color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 6px 14px; font-size: 12px; }
+  .btn-danger { background: rgba(231,76,60,0.2); color: var(--danger); border: 1px solid var(--danger); }
+
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 600px) { .form-row { grid-template-columns: 1fr; } }
+
+  .feedback {
+    padding: 12px; border-radius: var(--radius);
+    font-size: 13px; margin-top: 12px;
+  }
+  .feedback-success { background: rgba(46,204,113,0.1); border: 1px solid var(--success); color: var(--success); }
+  .feedback-error { background: rgba(231,76,60,0.1); border: 1px solid var(--danger); color: var(--danger); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead tr { background: var(--surface2); }
+  th {
+    padding: 10px 12px; text-align: left;
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-muted); border-bottom: 1px solid var(--border);
+  }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+  .badge {
+    display: inline-block; padding: 2px 10px;
+    border-radius: 20px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .badge-confirmed { background: rgba(52,152,219,0.15); color: #3498db; }
+  .badge-fulfilled { background: rgba(46,204,113,0.15); color: var(--success); }
+  .badge-cancelled { background: rgba(150,150,150,0.15); color: var(--text-muted); }
+  .badge-expired { background: rgba(231,76,60,0.15); color: var(--danger); }
+
+  .tab-bar {
+    display: flex; gap: 4px; margin-bottom: 16px;
+    border-bottom: 1px solid var(--border); padding-bottom: 4px;
+  }
+  .tab-btn {
+    background: none; border: none; color: var(--text-muted);
+    font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600;
+    padding: 8px 16px; cursor: pointer; border-radius: 6px 6px 0 0;
+    transition: all 0.15s;
+  }
+  .tab-btn:hover { color: var(--accent); }
+  .tab-btn.active {
+    color: var(--accent);
+    background: var(--surface2);
+    border-bottom: 2px solid var(--accent);
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  #auth-section { display: block; }
+  #app-section { display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">GarageFlow Customer Portal</div>
+  <div class="header-right">
+    <span id="user-display" style="display:none;"></span>
+    <button class="btn btn-secondary btn-sm" id="btn-logout" style="display:none;">Logout</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ══ Auth Section ══ -->
+  <div id="auth-section">
+    <div class="panel">
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="login-tab">Login</button>
+        <button class="tab-btn" data-tab="register-tab">Register</button>
+      </div>
+
+      <div id="login-tab" class="tab-content active">
+        <div class="field">
+          <label for="login-email">Email</label>
+          <input type="text" id="login-email" placeholder="you@example.com">
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input type="password" id="login-password" placeholder="Password">
+        </div>
+        <button class="btn btn-primary" id="btn-login" style="width:100%;">Login</button>
+        <div id="login-feedback"></div>
+      </div>
+
+      <div id="register-tab" class="tab-content">
+        <div class="form-row">
+          <div class="field">
+            <label for="reg-name">Full Name</label>
+            <input type="text" id="reg-name" placeholder="Jane Doe">
+          </div>
+          <div class="field">
+            <label for="reg-email">Email</label>
+            <input type="text" id="reg-email" placeholder="you@example.com">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="reg-phone">Phone</label>
+            <input type="text" id="reg-phone" placeholder="555-0100">
+          </div>
+          <div class="field">
+            <label for="reg-password">Password (min 8 chars)</label>
+            <input type="password" id="reg-password" placeholder="Password">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="btn-register" style="width:100%;">Create Account</button>
+        <div id="register-feedback"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ App Section (shown after login) ══ -->
+  <div id="app-section">
+
+    <!-- Vehicles Panel -->
+    <div class="panel">
+      <div class="panel-title" style="display:flex; justify-content:space-between; align-items:baseline;">
+        My Vehicles
+        <button class="btn btn-secondary btn-sm" id="btn-show-add-vehicle">Add Vehicle</button>
+      </div>
+
+      <div id="add-vehicle-form" style="display:none; margin-bottom:16px;">
+        <div class="form-row">
+          <div class="field">
+            <label for="v-plate">License Plate</label>
+            <input type="text" id="v-plate" placeholder="ABC-1234">
+          </div>
+          <div class="field">
+            <label for="v-state">State</label>
+            <input type="text" id="v-state" placeholder="NY" value="N/A">
+          </div>
+        </div>
+        <div class="field">
+          <label for="v-type">Vehicle Type</label>
+          <select id="v-type">
+            <option value="car">Car</option>
+            <option value="motorcycle">Motorcycle</option>
+            <option value="truck">Truck</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-primary btn-sm" id="btn-add-vehicle">Add</button>
+          <button class="btn btn-secondary btn-sm" id="btn-cancel-vehicle">Cancel</button>
+        </div>
+        <div id="vehicle-feedback"></div>
+      </div>
+
+      <table>
+        <thead><tr><th>Plate</th><th>State</th><th>Type</th></tr></thead>
+        <tbody id="vehicles-tbody">
+          <tr><td colspan="3" style="text-align:center; color:var(--text-dim);">No vehicles</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Reservations Panel -->
+    <div class="panel">
+      <div class="panel-title">My Reservations</div>
+
+      <div style="margin-bottom:16px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:8px;">
+        <div style="font-size:13px; font-weight:600; color:var(--text-muted); text-transform:uppercase; margin-bottom:12px;">New Reservation</div>
+        <div class="form-row">
+          <div class="field">
+            <label for="r-vehicle">Vehicle</label>
+            <select id="r-vehicle">
+              <option value="">Select vehicle...</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="r-class">Driver Class</label>
+            <select id="r-class">
+              <option value="standard">Standard</option>
+              <option value="accessibility">Accessibility</option>
+              <option value="employee">Employee</option>
+              <option value="eco">Eco</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="r-date">Arrival Date</label>
+            <input type="date" id="r-date">
+          </div>
+          <div class="field">
+            <label for="r-time">Arrival Time</label>
+            <input type="time" id="r-time">
+          </div>
+        </div>
+        <div class="field">
+          <label for="r-duration">Duration (hours)</label>
+          <input type="number" id="r-duration" value="2" min="1" max="24">
+        </div>
+        <button class="btn btn-primary" id="btn-create-res" style="width:100%;">Reserve</button>
+        <div id="res-feedback"></div>
+      </div>
+
+      <div style="margin-bottom:8px;">
+        <label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="chk-old-res" style="width:auto;"> Show past reservations
+        </label>
+      </div>
+
+      <table>
+        <thead><tr><th>ID</th><th>Arrival</th><th>Floor</th><th>Fee</th><th>Status</th></tr></thead>
+        <tbody id="res-tbody">
+          <tr><td colspan="5" style="text-align:center; color:var(--text-dim);">No reservations</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  const BASE = '';
+  let token = null;
+  let customer = null;
+
+  // ── API helpers ───────────────────────────────────────────
+  async function api(method, path, body) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(BASE + path, opts);
+    if (res.status === 204) return null;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || data.error || 'Request failed');
+    return data;
+  }
+
+  function showFeedback(id, msg, isError) {
+    const el = document.getElementById(id);
+    el.innerHTML = '<div class="feedback ' + (isError ? 'feedback-error' : 'feedback-success') + '">' + msg + '</div>';
+  }
+
+  // ── Tab switching ─────────────────────────────────────────
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabId = btn.dataset.tab;
+      btn.closest('.panel').querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.closest('.panel').querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(tabId).classList.add('active');
+    });
+  });
+
+  // ── Auth ──────────────────────────────────────────────────
+  function onLogin(data) {
+    token = data.token;
+    customer = data.customer;
+    document.getElementById('auth-section').style.display = 'none';
+    document.getElementById('app-section').style.display = 'block';
+    document.getElementById('user-display').style.display = 'inline';
+    document.getElementById('user-display').textContent = customer.name;
+    document.getElementById('btn-logout').style.display = 'inline-flex';
+    loadVehicles();
+    loadReservations();
+  }
+
+  document.getElementById('btn-login').addEventListener('click', async () => {
+    try {
+      const data = await api('POST', '/v1/customer/login', {
+        email: document.getElementById('login-email').value,
+        password: document.getElementById('login-password').value,
+      });
+      onLogin(data);
+    } catch (e) { showFeedback('login-feedback', e.message, true); }
+  });
+
+  document.getElementById('btn-register').addEventListener('click', async () => {
+    try {
+      const data = await api('POST', '/v1/customer/register', {
+        name: document.getElementById('reg-name').value,
+        email: document.getElementById('reg-email').value,
+        phone: document.getElementById('reg-phone').value,
+        password: document.getElementById('reg-password').value,
+      });
+      onLogin(data);
+    } catch (e) { showFeedback('register-feedback', e.message, true); }
+  });
+
+  document.getElementById('btn-logout').addEventListener('click', async () => {
+    try { await api('POST', '/v1/customer/logout'); } catch (_) {}
+    token = null;
+    customer = null;
+    document.getElementById('auth-section').style.display = 'block';
+    document.getElementById('app-section').style.display = 'none';
+    document.getElementById('user-display').style.display = 'none';
+    document.getElementById('btn-logout').style.display = 'none';
+  });
+
+  // ── Vehicles ──────────────────────────────────────────────
+  let vehicles = [];
+
+  async function loadVehicles() {
+    try {
+      vehicles = await api('GET', '/v1/customer/vehicles');
+      renderVehicles();
+      renderVehicleSelect();
+    } catch (_) {}
+  }
+
+  function renderVehicles() {
+    const tbody = document.getElementById('vehicles-tbody');
+    if (!vehicles.length) {
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:var(--text-dim);">No vehicles</td></tr>';
+      return;
+    }
+    tbody.innerHTML = vehicles.map(v =>
+      '<tr><td>' + v.licensePlate + '</td><td>' + v.plateState + '</td><td>' + v.vehicleType + '</td></tr>'
+    ).join('');
+  }
+
+  function renderVehicleSelect() {
+    const sel = document.getElementById('r-vehicle');
+    sel.innerHTML = '<option value="">Select vehicle...</option>' +
+      vehicles.map(v => '<option value="' + v.vehicleId + '">' + v.licensePlate + '</option>').join('');
+  }
+
+  document.getElementById('btn-show-add-vehicle').addEventListener('click', () => {
+    document.getElementById('add-vehicle-form').style.display = 'block';
+  });
+  document.getElementById('btn-cancel-vehicle').addEventListener('click', () => {
+    document.getElementById('add-vehicle-form').style.display = 'none';
+  });
+
+  document.getElementById('btn-add-vehicle').addEventListener('click', async () => {
+    try {
+      await api('POST', '/v1/customer/vehicles', {
+        licensePlate: document.getElementById('v-plate').value,
+        plateState: document.getElementById('v-state').value,
+        vehicleType: document.getElementById('v-type').value,
+      });
+      document.getElementById('add-vehicle-form').style.display = 'none';
+      document.getElementById('v-plate').value = '';
+      loadVehicles();
+    } catch (e) { showFeedback('vehicle-feedback', e.message, true); }
+  });
+
+  // ── Reservations ──────────────────────────────────────────
+  async function loadReservations() {
+    const includeOld = document.getElementById('chk-old-res').checked;
+    try {
+      const reservations = await api('GET', '/v1/customer/reservations?includeOld=' + includeOld);
+      renderReservations(reservations);
+    } catch (_) {}
+  }
+
+  function renderReservations(list) {
+    const tbody = document.getElementById('res-tbody');
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-dim);">No reservations</td></tr>';
+      return;
+    }
+    tbody.innerHTML = list.map(r => {
+      const dt = new Date(r.scheduledArrival);
+      const badge = 'badge-' + r.status;
+      return '<tr>' +
+        '<td>' + r.reservationId + '</td>' +
+        '<td>' + dt.toLocaleString() + '</td>' +
+        '<td>' + (r.floorNumber != null ? r.floorNumber : '-') + '</td>' +
+        '<td>' + (r.quotedFee != null ? '$' + r.quotedFee.toFixed(2) : '-') + '</td>' +
+        '<td><span class="badge ' + badge + '">' + r.status + '</span></td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  document.getElementById('chk-old-res').addEventListener('change', loadReservations);
+
+  document.getElementById('btn-create-res').addEventListener('click', async () => {
+    const vehicleId = document.getElementById('r-vehicle').value;
+    const date = document.getElementById('r-date').value;
+    const time = document.getElementById('r-time').value;
+    const duration = parseInt(document.getElementById('r-duration').value) || 2;
+    const driverClass = document.getElementById('r-class').value;
+
+    if (!vehicleId || !date || !time) {
+      showFeedback('res-feedback', 'Please fill all required fields', true);
+      return;
+    }
+
+    const arrival = new Date(date + 'T' + time + ':00').toISOString();
+    const end = new Date(new Date(date + 'T' + time + ':00').getTime() + duration * 3600000).toISOString();
+
+    try {
+      await api('POST', '/v1/customer/reservations', {
+        vehicleId: parseInt(vehicleId),
+        scheduledArrival: arrival,
+        endDatetime: end,
+        driverClass: driverClass,
+      });
+      showFeedback('res-feedback', 'Reservation created!', false);
+      loadReservations();
+    } catch (e) { showFeedback('res-feedback', e.message, true); }
+  });
+})();
+</script>
+
+</body>
+</html>

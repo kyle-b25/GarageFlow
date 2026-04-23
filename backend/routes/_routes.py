@@ -162,17 +162,21 @@ def get_garage():
     from models import Garage
 
     try:
-        garage = Garage.query.first()
-        if not garage:
+        garages = Garage.query.all()
+        if not garages:
             return jsonify({'error': 'garage_not_found', 'message': 'No garage configured'}), 404
-        return jsonify({
-            'garageId':        garage.garage_id,
-            'name':            garage.name,
-            'totalCapacity':   garage.total_capacity,
-            'numberOfFloors':  garage.number_of_floors,
-            'operatingHours':  garage.operating_hours,
-            'frontDeskPhone':  garage.front_desk_phone,
-        }), 200
+        result = [{
+            'garageId':        g.garage_id,
+            'name':            g.name,
+            'totalCapacity':   g.total_capacity,
+            'numberOfFloors':  g.number_of_floors,
+            'operatingHours':  g.operating_hours,
+            'frontDeskPhone':  g.front_desk_phone,
+        } for g in garages]
+        # Backward compat: if only one garage, return object; otherwise array
+        if len(result) == 1:
+            return jsonify(result[0]), 200
+        return jsonify(result), 200
     except Exception as exc:
         db.session.rollback()
         log_error('routes.get_garage', str(exc))
