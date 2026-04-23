@@ -160,12 +160,19 @@ def get_revenue():
         return jsonify({'error': 'invalid_date_range', 'message': str(exc)}), 400
 
     try:
-        tickets = Ticket.query.filter(
+        q = Ticket.query.filter(
             Ticket.status == TicketStatusEnum.closed,
             Ticket.exit_timestamp >= from_dt,
             Ticket.exit_timestamp <= to_dt,
             Ticket.total_fee.isnot(None),
-        ).all()
+        )
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            from models import ParkingSpot, Floor
+            q = (q.join(ParkingSpot, Ticket.spot_id == ParkingSpot.spot_id)
+                   .join(Floor, ParkingSpot.floor_id == Floor.floor_id)
+                   .filter(Floor.garage_id == garage_id))
+        tickets = q.all()
 
         count         = len(tickets)
         total_revenue = sum(float(t.total_fee) for t in tickets)

@@ -41,6 +41,11 @@ CORS(app, origins=_cors_origins or ['*'], supports_credentials=True)
 
 import models  # noqa: F401 — registers all models with SQLAlchemy metadata
 
+# Swagger UI at /docs
+from flasgger import Swagger
+from swagger_config import SWAGGER_TEMPLATE, SWAGGER_CONFIG
+Swagger(app, template=SWAGGER_TEMPLATE, config=SWAGGER_CONFIG)
+
 
 @app.route('/operator-front')
 def index():

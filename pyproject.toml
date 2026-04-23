@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend"]
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+    "--cov=backend",
+    "--cov-report=term-missing",
+    "--cov-report=html:coverage_html",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:flask_sqlalchemy.*",
+]

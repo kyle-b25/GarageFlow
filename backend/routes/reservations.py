@@ -121,7 +121,11 @@ def post_reservation():
     effective_class = driver_class if driver_class in _DRIVER_CLASS_TO_SPOT_TYPE else 'standard'
 
     try:
-        spot, floor = assign_spot(effective_class, arrival_datetime=parsed_arrival.replace(tzinfo=None))
+        spot, floor = assign_spot(
+            effective_class,
+            arrival_datetime=parsed_arrival.replace(tzinfo=None),
+            vehicle_type=vehicle.vehicle_type.value if vehicle else None,
+        )
     except Exception as exc:
         db.session.rollback()
         log_error('reservations.post_reservation', str(exc))
@@ -176,6 +180,14 @@ def post_reservation():
         db.session.rollback()
         log_error('reservations.post_reservation', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to create reservation'}), 500
+
+    # Send confirmation notification (best-effort, non-blocking)
+    try:
+        from notifications import notify_reservation_confirmed
+        customer_obj = Customer.query.get(customer_id)
+        notify_reservation_confirmed(reservation, customer=customer_obj)
+    except Exception:
+        pass  # notification failure must not affect the API response
 
     return jsonify(_reservation_json(reservation)), 201
 
@@ -366,9 +378,12 @@ def check_in_reservation(reservation_id):
         if not vehicle or vehicle.license_plate != license_plate:
             return jsonify({'error': 'plate_mismatch', 'message': 'License plate does not match reservation vehicle'}), 409
 
-        # Assign a spot using reservation's driver class
+        # Assign a spot using reservation's driver class and vehicle type
         effective_class = r.driver_class or 'standard'
-        spot, floor = assign_spot(effective_class)
+        spot, floor = assign_spot(
+            effective_class,
+            vehicle_type=vehicle.vehicle_type.value if vehicle else None,
+        )
         if not spot:
             return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
 
