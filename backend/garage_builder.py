@@ -1,19 +1,20 @@
 """
 garage_builder.py — GarageFlow Interactive Garage Builder
 
-Run this from your garageflow backend folder:
+Run this from your garageflow project root:
     python garage_builder.py
 
-Guides you through building your garage floor by floor, zone by zone,
-then writes everything to the database — including entry and exit gates
-which are required by tickets and reservations.
+It will prompt you to build your garage floor by floor, zone by zone,
+then write everything to the database using your existing models.
 
-Wipes existing Garage, Floor, ParkingSpot, and GateEvent data before seeding.
+Wipes any existing Garage, Floor, and ParkingSpot data before seeding.
 """
 
 import sys
 import os
 
+# Add the garageflow project root (the directory this script lives in) to the path,
+# matching how seed.py resolves imports.
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_DIR)
 
@@ -22,11 +23,10 @@ try:
     from models import (
         Garage, Floor, ParkingSpot,
         SpotTypeEnum, SpotStatusEnum,
-        GateEvent, GateTypeEnum, GateStatusEnum,
     )
 except ImportError as e:
     print(f"\n❌  Could not import GarageFlow modules: {e}")
-    print("    Make sure you run this script from your garageflow backend folder.")
+    print("    Make sure you run this script from your garageflow project root.")
     sys.exit(1)
 
 
@@ -35,6 +35,7 @@ except ImportError as e:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def ask(prompt, default=None):
+    """Prompt the user for a string. Re-prompts if blank and no default."""
     suffix = f" [{default}]" if default is not None else ""
     while True:
         val = input(f"  {prompt}{suffix}: ").strip()
@@ -44,20 +45,24 @@ def ask(prompt, default=None):
             return str(default)
         print("    ⚠  This field is required.")
 
+
 def ask_int(prompt, default=None, min_val=1, max_val=9999):
+    """Prompt the user for an integer within [min_val, max_val]."""
     while True:
         raw = ask(prompt, default)
         try:
             val = int(raw)
         except ValueError:
-            print("    ⚠  Please enter a whole number.")
+            print(f"    ⚠  Please enter a whole number.")
             continue
         if val < min_val or val > max_val:
             print(f"    ⚠  Must be between {min_val} and {max_val}.")
             continue
         return val
 
+
 def ask_yes_no(prompt, default=True):
+    """Prompt the user for y/n."""
     hint = "Y/n" if default else "y/N"
     while True:
         raw = input(f"  {prompt} [{hint}]: ").strip().lower()
@@ -69,8 +74,10 @@ def ask_yes_no(prompt, default=True):
             return False
         print("    ⚠  Please enter y or n.")
 
+
 def divider(char="─", width=56):
     print(char * width)
+
 
 def header(title):
     divider("═")
@@ -78,10 +85,11 @@ def header(title):
     divider("═")
 
 
+# Spot types the builder supports, mapped to SpotTypeEnum values
 SPOT_TYPES = {
     "standard":      SpotTypeEnum.standard,
     "accessibility": SpotTypeEnum.accessibility,
-    "staff":         SpotTypeEnum.staff,
+    "staff":         SpotTypeEnum.staff,   # covers employee + eco conceptually
 }
 
 SPOT_TYPE_LABELS = {
@@ -97,14 +105,20 @@ ZONE_LETTERS = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 #  Floor builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_floor(floor_index):
+def build_floor(floor_index, garage_id):
+    """
+    Interactively collect all data for one floor.
+    Returns a dict ready to be committed as Floor + ParkingSpot rows.
+    """
     header(f"FLOOR {floor_index}")
 
     floor_number = ask_int("Floor number (e.g. -1 for basement, 1, 2 …)", default=floor_index)
     floor_name   = ask("Floor name (e.g. Ground, Rooftop, Basement — or leave blank)", default="")
-    floor_name   = floor_name or None
+    floor_name   = floor_name if floor_name else None
 
     print()
+    print("  How many zones does this floor have?")
+    print("  Each zone gets a letter (A, B, C …) and its own spot counts.")
     num_zones = ask_int("Number of zones", default=1, min_val=1, max_val=26)
 
     zones = []
@@ -115,22 +129,26 @@ def build_floor(floor_index):
         divider()
         print(f"  Zone {zone_letter}")
         divider()
+
         zone_spots = []
 
         for type_key, type_enum in SPOT_TYPES.items():
             label = SPOT_TYPE_LABELS[type_key]
             count = ask_int(f"  {label} spots in Zone {zone_letter}", default=0, min_val=0)
+
             for i in range(1, count + 1):
+                location_ref = f"{zone_letter}-{i:02d}-{type_key[:3].upper()}"
                 zone_spots.append({
                     "spot_type":          type_enum,
                     "status":             SpotStatusEnum.available,
-                    "location_reference": f"{zone_letter}-{i:02d}-{type_key[:3].upper()}",
+                    "location_reference": location_ref,
                 })
                 floor_total += 1
 
         zones.append(zone_spots)
 
     all_spots = [spot for zone in zones for spot in zone]
+
     print()
     print(f"  ✔  Floor {floor_number} summary: {floor_total} total spots across {num_zones} zone(s).")
     return {
@@ -143,17 +161,17 @@ def build_floor(floor_index):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Main
+#  Main builder
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
     header("GARAGEFLOW INTERACTIVE GARAGE BUILDER")
     print()
     print("  This script will guide you through creating a garage,")
-    print("  its floors, zones, parking spots, and entry/exit gates.")
+    print("  its floors, zones, and parking spots.")
     print()
-    print("  ⚠  Existing Garage, Floor, ParkingSpot, and GateEvent")
-    print("     data will be cleared before the new data is written.")
+    print("  ⚠  Existing Garage, Floor, and ParkingSpot data will be")
+    print("     cleared before the new data is written.")
     print()
 
     if not ask_yes_no("Ready to start?", default=True):
@@ -163,9 +181,9 @@ def main():
     # ── Garage details ────────────────────────────────────────────────────────
     print()
     header("GARAGE DETAILS")
-    garage_name   = ask("Garage name", default="GarageFlow Main")
-    operating_hrs = ask("Operating hours (e.g. 6:00am–midnight)", default="6:00am–midnight")
-    front_desk_ph = ask("Front-desk phone", default="555-0100")
+    garage_name    = ask("Garage name", default="GarageFlow Main")
+    operating_hrs  = ask("Operating hours (e.g. 6:00am–midnight)", default="6:00am–midnight")
+    front_desk_ph  = ask("Front-desk phone", default="555-0100")
 
     # ── Floor loop ────────────────────────────────────────────────────────────
     print()
@@ -174,7 +192,7 @@ def main():
     floor_data = []
     for i in range(1, num_floors + 1):
         print()
-        floor_data.append(build_floor(i))
+        floor_data.append(build_floor(i, garage_id=None))  # garage_id assigned after insert
 
     # ── Summary ───────────────────────────────────────────────────────────────
     grand_total = sum(f["total_spots"] for f in floor_data)
@@ -183,7 +201,6 @@ def main():
     print(f"  Garage  : {garage_name}")
     print(f"  Floors  : {num_floors}")
     print(f"  Spots   : {grand_total} total")
-    print(f"  Gates   : 1 entry + 1 exit (created automatically)")
     print()
     for fd in floor_data:
         name_str = f" ({fd['floor_name']})" if fd["floor_name"] else ""
@@ -201,12 +218,12 @@ def main():
     with app.app_context():
         # Clear existing structure data
         ParkingSpot.query.delete()
-        GateEvent.query.delete()
         Floor.query.delete()
         Garage.query.delete()
+        db.session.flush()
         db.session.commit()
 
-        # Garage
+        # Create Garage
         garage = Garage(
             name=garage_name,
             total_capacity=grand_total,
@@ -217,7 +234,7 @@ def main():
         db.session.add(garage)
         db.session.flush()
 
-        # Floors + Spots
+        # Create Floors + Spots
         for fd in floor_data:
             floor = Floor(
                 garage_id=garage.garage_id,
@@ -237,20 +254,15 @@ def main():
                     location_reference=spot_def["location_reference"],
                 ))
 
-        # Entry + exit gates — required by tickets and reservations
-        entry_gate = GateEvent(garage_id=garage.garage_id, gate_type=GateTypeEnum.entry, status=GateStatusEnum.open)
-        exit_gate  = GateEvent(garage_id=garage.garage_id, gate_type=GateTypeEnum.exit,  status=GateStatusEnum.open)
-        db.session.add(entry_gate)
-        db.session.add(exit_gate)
-
         db.session.commit()
 
     print()
     divider("═")
-    print(f"  ✅  Done! Garage '{garage_name}' created.")
-    print(f"      {grand_total} spots across {num_floors} floor(s).")
-    print(f"      Entry gate + exit gate created.")
+    print(f"  ✅  Done! Garage '{garage_name}' created with {grand_total} spots")
+    print(f"      across {num_floors} floor(s).")
     divider("═")
+    print()
+    print("  You can now start your Flask server and use the kiosk.")
     print()
 
 

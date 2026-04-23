@@ -595,9 +595,9 @@ async function refreshDashboard() {
 
   try {
     const occ = await getOccupancy(dashToken);
-    document.getElementById('dash-occupied').textContent = occ.occupiedSpots;
-    document.getElementById('dash-available').textContent = occ.availableSpots;
-    document.getElementById('dash-rate').textContent = Math.round(occ.occupancyRate * 100) + '%';
+	document.getElementById('dash-occupied').textContent = occ.live.occupied;
+	document.getElementById('dash-available').textContent = occ.live.available;
+	document.getElementById('dash-rate').textContent = Math.round(occ.live.utilizationRate) + '%';
   } catch (_e) {
     document.getElementById('dash-occupied').textContent = 'Error';
   }
@@ -621,13 +621,12 @@ async function refreshDashboard() {
   }
 
   try {
-    const peak = await getPeakHours(dashToken, from, to);
-    const peakEl = document.getElementById('dash-peak');
-    const sorted = peak.hours.filter(h => h.count > 0).sort((a, b) => b.count - a.count).slice(0, 8);
-    peakEl.innerHTML = sorted.map(h =>
-      `<div style="display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px solid var(--border);">` +
-      `<span>${String(h.hour).padStart(2,'0')}:00</span><span>${h.count} entries</span></div>`
-    ).join('') || 'No data';
+	  const peak = await getPeakHours(dashToken, from, to);
+	  const peakEl = document.getElementById('dash-peak');
+	  peakEl.innerHTML = peak.hours.filter(h => h.totalEntries > 0).slice(0, 8).map(h =>
+	  `<div style="display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px solid var(--border);">` +
+	  `<span>${String(h.hour).padStart(2,'0')}:00</span><span>${h.totalEntries} entries</span></div>`
+	  ).join('') || 'No data';
   } catch (_e) {
     document.getElementById('dash-peak').textContent = 'Could not load peak hours.';
   }
