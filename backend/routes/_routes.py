@@ -339,23 +339,23 @@ def delete_garage(garage_id):
 # ------------------------------------------------------------------
 
 def _is_duplicate_event(event_id):
-    """Check if a Stripe event has already been processed (exact match)."""
+    """Atomically record a Stripe event ID; return True if already processed.
+
+    Uses INSERT + IntegrityError on the unique event_id column instead of
+    check-then-insert, eliminating the TOCTOU race where two simultaneous
+    webhooks both pass a SELECT check.
+    """
     from app import db
-    from models import SystemEvent
+    from models import ProcessedWebhookEvent
+    from sqlalchemy.exc import IntegrityError
 
-    existing = SystemEvent.query.filter_by(
-        source='stripe_webhook',
-        description=event_id,
-    ).first()
-    if existing:
+    db.session.add(ProcessedWebhookEvent(event_id=event_id))
+    try:
+        db.session.flush()
+        return False
+    except IntegrityError:
+        db.session.rollback()
         return True
-
-    db.session.add(SystemEvent(
-        source='stripe_webhook',
-        description=event_id,
-    ))
-    # Do not commit here — let the handler's transaction include the dedup record
-    return False
 
 
 def _find_payment_by_intent(intent_id):
