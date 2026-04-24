@@ -150,11 +150,16 @@ def seed_admin(password):
 # ------------------------------------------------------------------
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from tasks import expire_stale_reservations, cleanup_stale_login_attempts
+from tasks import (
+    expire_stale_reservations, cleanup_stale_login_attempts,
+    reconcile_floor_counters, flag_stale_pending_payments,
+)
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(expire_stale_reservations, 'interval', minutes=10)
 scheduler.add_job(cleanup_stale_login_attempts, 'interval', minutes=10)
+scheduler.add_job(reconcile_floor_counters, 'interval', minutes=10)
+scheduler.add_job(flag_stale_pending_payments, 'interval', minutes=10)
 scheduler.start()
 
 

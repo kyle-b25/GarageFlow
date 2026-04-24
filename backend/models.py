@@ -494,3 +494,16 @@ class LoginAttempt(db.Model):
     ip_address   = db.Column(db.String(45), primary_key=True)  # IPv6 max length
     fail_count   = db.Column(db.Integer, nullable=False, default=0)
     window_start = db.Column(db.DateTime, nullable=False)
+
+
+class ProcessedWebhookEvent(db.Model):
+    """
+    Idempotency table for Stripe webhook deduplication.
+    The unique constraint on event_id prevents TOCTOU races when
+    two identical webhook deliveries arrive simultaneously.
+    """
+    __tablename__ = "processed_webhook_event"
+
+    id         = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    event_id   = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
