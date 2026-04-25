@@ -6,7 +6,7 @@ each with a 5-hour stay.  Every ticket gets a matching vehicle, payment,
 and occupancy_log pair (occupied + freed).
 
 Usage (it works when I run it from inside BSTools):
-    python seed_tickets_48h.py
+    python seed_past_tickets.py
 """
 
 import argparse
