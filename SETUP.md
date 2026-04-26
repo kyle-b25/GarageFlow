@@ -4,7 +4,10 @@
 
 - **Python 3.10+** (3.14 works but any 3.10+ is fine)
 - **Git**
+- **Docker** (optional — for containerized deployment)
 - **Stripe test keys** (optional — needed only for payment processing)
+- **SendGrid API key** (optional — for email notifications)
+- **Twilio credentials** (optional — for SMS notifications)
 
 ---
 
@@ -124,13 +127,9 @@ Expected output:
 
 ---
 
-## Access the Operator Kiosk UI
+## Access the UI
 
-Open in your browser:
-
-```
-http://127.0.0.1:5000/operator-front
-```
+**Operator Kiosk:** http://127.0.0.1:5000/operator-front
 
 The kiosk has panels for:
 - **Garage Entry** — register a vehicle entering the garage
@@ -139,30 +138,33 @@ The kiosk has panels for:
 - **Reservations** — create, check-in, and cancel reservations
 - **Admin Dashboard** — login with admin credentials to access analytics, staff management, audit log, and garage configuration
 
+**Customer Portal:** http://127.0.0.1:5000/customer-portal
+
+Self-service portal for customers to check availability, make reservations, and view their reservation status.
+
+**API Docs (Swagger UI):** http://127.0.0.1:5000/docs
+
+Interactive API documentation with try-it-out functionality.
+
 ---
 
 ## Run Tests
 
+Run from the **project root** (not `backend/`):
+
 ```bash
-cd backend
 pytest
 ```
 
 Run a specific test file:
 ```bash
-pytest tests/test_all.py -v
+pytest backend/tests/test_all.py -v
 ```
 
 Run a specific test class or method:
 ```bash
-pytest tests/test_all.py::TestTicketCreation -v
-pytest tests/test_workflows.py::TestVehicleEntry::test_entry_standard_driver -v
-```
-
-Install pytest in your venv if it is missing:
-```bash
-pip install pytest
-python -m pytest tests/test_all.py -v
+pytest backend/tests/test_all.py::TestTicketCreation -v
+pytest backend/tests/test_workflows.py::TestVehicleEntry::test_entry_standard_driver -v
 ```
 ---
 
@@ -194,4 +196,23 @@ flask db downgrade
 | `DATABASE_URL` | No | `sqlite:///database.db` | SQLAlchemy connection string |
 | `STRIPE_SECRET_KEY` | No | — | Stripe secret key for payment processing |
 | `STRIPE_PUBLISHABLE_KEY` | No | — | Stripe publishable key (sent to frontend) |
+| `STRIPE_WEBHOOK_SECRET` | No | — | Stripe webhook signing secret |
 | `CORS_ORIGINS` | No | `*` (all) | Comma-separated allowed origins |
+| `SENDGRID_API_KEY` | No | — | SendGrid API key for email notifications |
+| `NOTIFICATION_FROM_EMAIL` | No | — | Sender email address for notifications |
+| `TWILIO_ACCOUNT_SID` | No | — | Twilio account SID for SMS |
+| `TWILIO_AUTH_TOKEN` | No | — | Twilio auth token |
+| `TWILIO_FROM_NUMBER` | No | — | Twilio sender phone number |
+| `CONGESTION_THRESHOLD` | No | `0.85` | Occupancy ratio that triggers congestion alerts |
+
+---
+
+## Docker Deployment
+
+```bash
+# Production (requires SECRET_KEY in .env)
+docker compose up app
+
+# Development with live-reload
+docker compose --profile dev up dev
+```
