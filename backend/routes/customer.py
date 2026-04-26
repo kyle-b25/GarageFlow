@@ -314,7 +314,7 @@ def customer_create_reservation():
         end_datetime = parsed_arrival + timedelta(hours=2)
 
     try:
-        spot, floor = assign_spot(
+        spot, floor, reason = assign_spot(
             driver_class,
             arrival_datetime=parsed_arrival,
             vehicle_type=vehicle.vehicle_type.value,
@@ -326,8 +326,16 @@ def customer_create_reservation():
         return jsonify({'error': 'server_error', 'message': 'Failed to assign spot'}), 500
 
     if not spot:
-        return jsonify({'error': 'garage_full',
-                        'message': 'No available spots for this driver class'}), 503
+        spot_type = _DRIVER_CLASS_TO_SPOT_TYPE.get(driver_class, driver_class)
+        messages = {
+            'no_spot_type': f'No {spot_type} spots exist in this garage',
+            'spots_occupied': f'All {spot_type} spots are currently occupied',
+            'vehicle_incompatible': f'Vehicle type is not compatible with {spot_type} spots',
+            'reservation_conflict': f'All {spot_type} spots conflict with existing reservations',
+        }
+        msg = messages.get(reason, 'Garage is full — no available spots')
+        error_key = 'no_spot_type' if reason == 'no_spot_type' else 'garage_full'
+        return jsonify({'error': error_key, 'message': msg}), 503
 
     reservation = Reservation(
         customer_id=g.current_customer.customer_id,

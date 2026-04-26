@@ -158,6 +158,21 @@ export async function getTicketsByPlate(plate) {
   return _request('GET', `/v1/tickets?${params}`);
 }
 
+/** GET /v1/tickets?status=active — list all active tickets. */
+export async function getActiveTickets() {
+  return _request('GET', '/v1/tickets?status=active');
+}
+
+/** GET /v1/tickets?status=closed — list closed tickets. */
+export async function getClosedTickets() {
+  return _request('GET', '/v1/tickets?status=closed');
+}
+
+/** POST /v1/tickets/{id}/override — admin override (reopen, void, etc). */
+export async function overrideTicket(ticketId, data) {
+  return _authRetry('POST', `/v1/tickets/${ticketId}/override`, data);
+}
+
 /**
  * PUT /v1/tickets/{id}/exit — process vehicle exit.
  * @returns {{ ticketId, licensePlate, exitTime, duration, totalFee, paymentStatus, status }}
@@ -374,4 +389,34 @@ export async function updateGarageAPI(garageId, data) {
 /** DELETE /v1/garage/{id} — delete garage (admin). */
 export async function deleteGarageAPI(garageId) {
   return _authRetry('DELETE', `/v1/garage/${garageId}`);
+}
+
+/** POST /v1/floors — create a new floor (admin). */
+export async function createFloorAPI(data) {
+  return _authRetry('POST', '/v1/floors', data);
+}
+
+/** PUT /v1/floors/{id} — update floor (admin). */
+export async function updateFloorAPI(floorId, data) {
+  return _authRetry('PUT', `/v1/floors/${floorId}`, data);
+}
+
+/** DELETE /v1/floors/{id} — delete floor (admin). */
+export async function deleteFloorAPI(floorId) {
+  return _authRetry('DELETE', `/v1/floors/${floorId}`);
+}
+
+/** GET /v1/floors/{id}/spaces — list spots on a floor. */
+export async function getFloorSpaces(floorId) {
+  return apiFetch(`/v1/floors/${floorId}/spaces`);
+}
+
+/** POST /v1/floors/{id}/spaces — create a spot on a floor (admin). */
+export async function createSpaceAPI(floorId, data) {
+  return _authRetry('POST', `/v1/floors/${floorId}/spaces`, data);
+}
+
+/** DELETE /v1/floors/{id}/spaces/{spotId} — delete a spot (admin). */
+export async function deleteSpaceAPI(floorId, spotId) {
+  return _authRetry('DELETE', `/v1/floors/${floorId}/spaces/${spotId}`);
 }

@@ -574,3 +574,222 @@ class TestBugPiiWipeScope:
             f'PII wipe on ticket {tid1} corrupted ticket {tid2}: '
             f'plate is now {detail2["licensePlate"]}'
         )
+
+
+# ==================================================================
+#  CUSTOM GARAGE FIXTURE — parametrizable floor/spot configs
+# ==================================================================
+
+def _make_garage_client(floor_configs):
+    """Create a test client with a custom garage configuration.
+
+    Args:
+        floor_configs: list of (floor_number, [(SpotTypeEnum, count), ...])
+    """
+    app.config['TESTING'] = True
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'
+    app.config['SECRET_KEY'] = 'test-secret'
+
+    with app.app_context():
+        db.create_all()
+
+        total = sum(c for _, types in floor_configs for _, c in types)
+        garage = Garage(
+            name='Custom Garage',
+            total_capacity=total,
+            number_of_floors=len(floor_configs),
+            operating_hours='24/7',
+        )
+        db.session.add(garage)
+        db.session.flush()
+
+        for floor_num, spot_types in floor_configs:
+            floor_total = sum(c for _, c in spot_types)
+            floor = Floor(
+                garage_id=garage.garage_id,
+                floor_number=floor_num,
+                floor_name=f'Floor {floor_num}',
+                total_spots=floor_total,
+                available_spots=floor_total,
+            )
+            db.session.add(floor)
+            db.session.flush()
+
+            idx = 1
+            for stype, count in spot_types:
+                for _ in range(count):
+                    db.session.add(ParkingSpot(
+                        floor_id=floor.floor_id,
+                        spot_type=stype,
+                        status=SpotStatusEnum.available,
+                        location_reference=f'{floor_num}-{idx}',
+                    ))
+                    idx += 1
+
+        db.session.commit()
+        yield app.test_client()
+        db.session.remove()
+        db.drop_all()
+
+
+# ==================================================================
+#  WORKFLOW 7 — No Spot Type Exists
+# ==================================================================
+
+class TestNoSpotTypeExists:
+    """Garage with only standard spots — requests for other types get no_spot_type."""
+
+    @pytest.fixture()
+    def std_only_client(self):
+        yield from _make_garage_client([
+            (1, [(SpotTypeEnum.standard, 3)]),
+        ])
+
+    def test_standard_entry_succeeds(self, std_only_client):
+        resp = create_ticket(std_only_client, 'STD-OK-1', 'standard')
+        assert resp.status_code == 201
+
+    def test_accessibility_entry_no_type(self, std_only_client):
+        resp = create_ticket(std_only_client, 'ACC-FAIL-1', 'accessibility')
+        assert resp.status_code == 503
+        data = resp.get_json()
+        assert data['error'] == 'no_spot_type'
+        assert 'accessibility' in data['message'].lower()
+
+    def test_employee_entry_no_type(self, std_only_client):
+        """Employee driver maps to staff spot type — none exist."""
+        resp = create_ticket(std_only_client, 'EMP-FAIL-1', 'employee')
+        assert resp.status_code == 503
+        data = resp.get_json()
+        assert data['error'] == 'no_spot_type'
+        assert 'staff' in data['message'].lower()
+
+    def test_eco_entry_no_type(self, std_only_client):
+        """Eco driver maps to staff spot type — none exist."""
+        resp = create_ticket(std_only_client, 'ECO-FAIL-1', 'eco')
+        assert resp.status_code == 503
+        data = resp.get_json()
+        assert data['error'] == 'no_spot_type'
+        assert 'staff' in data['message'].lower()
+
+    def test_reservation_accessibility_no_type(self, std_only_client):
+        future = (datetime.utcnow() + timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        resp = create_reservation(std_only_client, '555-9999', 'NOACC-1', future, 'accessibility')
+        assert resp.status_code == 503
+        data = resp.get_json()
+        assert data['error'] == 'no_spot_type'
+
+
+# ==================================================================
+#  WORKFLOW 8 — Varied Floor Configurations
+# ==================================================================
+
+class TestVariedFloorConfigs:
+    """Floor 1: 2 standard only. Floor 2: 2 accessibility only."""
+
+    @pytest.fixture()
+    def varied_client(self):
+        yield from _make_garage_client([
+            (1, [(SpotTypeEnum.standard, 2)]),
+            (2, [(SpotTypeEnum.accessibility, 2)]),
+        ])
+
+    def test_standard_routes_to_floor1(self, varied_client):
+        resp = create_ticket(varied_client, 'VAR-S1', 'standard')
+        assert resp.status_code == 201
+        assert resp.get_json()['assignedFloor'] == 1
+
+    def test_accessibility_routes_to_floor2(self, varied_client):
+        resp = create_ticket(varied_client, 'VAR-A1', 'accessibility')
+        assert resp.status_code == 201
+        assert resp.get_json()['assignedFloor'] == 2
+
+    def test_fill_standard_then_reject(self, varied_client):
+        """Fill 2 standard spots, 3rd standard → 503 with occupied message."""
+        for i in range(2):
+            resp = create_ticket(varied_client, f'VAR-FULL-S{i}', 'standard')
+            assert resp.status_code == 201
+        resp = create_ticket(varied_client, 'VAR-FULL-S-OVER', 'standard')
+        assert resp.status_code == 503
+        assert 'standard' in resp.get_json()['message'].lower()
+
+    def test_fill_accessibility_then_reject(self, varied_client):
+        """Fill 2 accessibility spots, 3rd → 503."""
+        for i in range(2):
+            resp = create_ticket(varied_client, f'VAR-FULL-A{i}', 'accessibility')
+            assert resp.status_code == 201
+        resp = create_ticket(varied_client, 'VAR-FULL-A-OVER', 'accessibility')
+        assert resp.status_code == 503
+        assert 'accessibility' in resp.get_json()['message'].lower()
+
+    def test_mixed_fill_and_release(self, varied_client):
+        """Fill both types, exit one standard, re-enter standard → 201."""
+        t1 = create_ticket(varied_client, 'VAR-MIX-S1', 'standard').get_json()
+        create_ticket(varied_client, 'VAR-MIX-S2', 'standard')
+        create_ticket(varied_client, 'VAR-MIX-A1', 'accessibility')
+        create_ticket(varied_client, 'VAR-MIX-A2', 'accessibility')
+
+        # Garage full — reject
+        resp = create_ticket(varied_client, 'VAR-MIX-OVER', 'standard')
+        assert resp.status_code == 503
+
+        # Exit one standard
+        exit_ticket(varied_client, t1['ticketId'], 'VAR-MIX-S1', 'cash')
+
+        # Re-enter standard → should work
+        resp = create_ticket(varied_client, 'VAR-MIX-S3', 'standard')
+        assert resp.status_code == 201
+
+
+# ==================================================================
+#  WORKFLOW 9 — Eco & Staff Spot Routing
+# ==================================================================
+
+class TestEcoAndStaffSpots:
+    """Garage with 2 standard + 1 staff + 1 eco. Tests driver→spot routing."""
+
+    @pytest.fixture()
+    def eco_client(self):
+        yield from _make_garage_client([
+            (1, [
+                (SpotTypeEnum.standard, 2),
+                (SpotTypeEnum.staff, 1),
+                (SpotTypeEnum.eco, 1),
+            ]),
+        ])
+
+    def test_employee_gets_staff_spot(self, eco_client):
+        resp = create_ticket(eco_client, 'ECO-EMP-1', 'employee')
+        assert resp.status_code == 201
+        ticket = Ticket.query.get(resp.get_json()['ticketId'])
+        spot = ParkingSpot.query.get(ticket.spot_id)
+        assert spot.spot_type == SpotTypeEnum.staff
+
+    def test_eco_driver_gets_staff_spot(self, eco_client):
+        """eco driver class maps to staff spot type."""
+        resp = create_ticket(eco_client, 'ECO-DRV-1', 'eco')
+        assert resp.status_code == 201
+        ticket = Ticket.query.get(resp.get_json()['ticketId'])
+        spot = ParkingSpot.query.get(ticket.spot_id)
+        assert spot.spot_type == SpotTypeEnum.staff
+
+    def test_fill_staff_eco_driver_rejected(self, eco_client):
+        """Fill the 1 staff spot, eco driver (needs staff) → 503."""
+        resp = create_ticket(eco_client, 'ECO-FILL-1', 'employee')
+        assert resp.status_code == 201
+        resp = create_ticket(eco_client, 'ECO-FILL-2', 'eco')
+        assert resp.status_code == 503
+        assert 'staff' in resp.get_json()['message'].lower()
+
+    def test_eco_spot_type_not_assigned_by_default(self, eco_client):
+        """No driver class maps to eco spot type — eco spots stay available."""
+        create_ticket(eco_client, 'ECO-ALL-1', 'standard')
+        create_ticket(eco_client, 'ECO-ALL-2', 'standard')
+        create_ticket(eco_client, 'ECO-ALL-3', 'employee')
+
+        # All standard and staff spots taken, but eco spot still available
+        eco_spot = ParkingSpot.query.filter_by(
+            spot_type=SpotTypeEnum.eco,
+            status=SpotStatusEnum.available,
+        ).first()
+        assert eco_spot is not None

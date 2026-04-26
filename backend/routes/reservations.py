@@ -122,7 +122,7 @@ def post_reservation():
     effective_class = driver_class if driver_class in _DRIVER_CLASS_TO_SPOT_TYPE else 'standard'
 
     try:
-        spot, floor = assign_spot(
+        spot, floor, reason = assign_spot(
             effective_class,
             arrival_datetime=parsed_arrival.replace(tzinfo=None),
             vehicle_type=vehicle.vehicle_type.value if vehicle else None,
@@ -134,7 +134,16 @@ def post_reservation():
         return jsonify({'error': 'server_error', 'message': 'Failed to assign spot'}), 500
 
     if not spot:
-        return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
+        spot_type = _DRIVER_CLASS_TO_SPOT_TYPE.get(effective_class, effective_class)
+        messages = {
+            'no_spot_type': f'No {spot_type} spots exist in this garage',
+            'spots_occupied': f'All {spot_type} spots are currently occupied',
+            'vehicle_incompatible': f'Vehicle type is not compatible with {spot_type} spots',
+            'reservation_conflict': f'All {spot_type} spots conflict with existing reservations',
+        }
+        msg = messages.get(reason, 'Garage is full — no available spots')
+        error_key = 'no_spot_type' if reason == 'no_spot_type' else 'garage_full'
+        return jsonify({'error': error_key, 'message': msg}), 503
 
     # Fixed: customer_id is NOT NULL per schema.sq1 — get-or-create from phone
     from models import AccountStatusEnum
@@ -428,12 +437,21 @@ def check_in_reservation(reservation_id):
 
         # Assign a spot using reservation's driver class and vehicle type
         effective_class = r.driver_class or 'standard'
-        spot, floor = assign_spot(
+        spot, floor, reason = assign_spot(
             effective_class,
             vehicle_type=vehicle.vehicle_type.value if vehicle else None,
         )
         if not spot:
-            return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
+            spot_type = _DRIVER_CLASS_TO_SPOT_TYPE.get(effective_class, effective_class)
+            messages = {
+                'no_spot_type': f'No {spot_type} spots exist in this garage',
+                'spots_occupied': f'All {spot_type} spots are currently occupied',
+                'vehicle_incompatible': f'Vehicle type is not compatible with {spot_type} spots',
+                'reservation_conflict': f'All {spot_type} spots conflict with existing reservations',
+            }
+            msg = messages.get(reason, 'Garage is full — no available spots')
+            error_key = 'no_spot_type' if reason == 'no_spot_type' else 'garage_full'
+            return jsonify({'error': error_key, 'message': msg}), 503
 
         # Occupy the spot
         spot.status = SpotStatusEnum.occupied

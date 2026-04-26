@@ -113,20 +113,55 @@ def create_floor():
         garage_id = data.get('garageId')
         floor_number = data.get('floorNumber')
         total_spots = data.get('totalSpots')
-        if garage_id is None or floor_number is None or total_spots is None:
-            return jsonify({"error": "missing_required_field", "message": "garageId, floorNumber, and totalSpots are required"}), 400
+        spots_config = data.get('spots')  # e.g. {"standard": 5, "accessibility": 2}
+
+        if garage_id is None or floor_number is None:
+            return jsonify({"error": "missing_required_field", "message": "garageId and floorNumber are required"}), 400
+        if total_spots is None and not spots_config:
+            return jsonify({"error": "missing_required_field", "message": "totalSpots or spots breakdown is required"}), 400
+
         garage = Garage.query.get(garage_id)
         if not garage:
             return jsonify({"error": "garage_not_found", "message": "No garage found with that ID"}), 404
+
+        # Validate spot types upfront
+        if spots_config:
+            for type_name in spots_config:
+                try:
+                    SpotTypeEnum(type_name)
+                except ValueError:
+                    return jsonify({"error": "invalid_spot_type", "message": f"Unknown spot type: {type_name}"}), 400
+
+        # Calculate total from breakdown if provided
+        if spots_config:
+            computed_total = sum(int(v) for v in spots_config.values())
+        else:
+            computed_total = total_spots
+
         floor = Floor(
             garage_id=garage_id,
             floor_number=floor_number,
             floor_name=data.get('floorName'),
-            total_spots=total_spots,
-            available_spots=0,
+            total_spots=computed_total,
+            available_spots=computed_total if spots_config else 0,
         )
         db.session.add(floor)
         db.session.flush()
+
+        # Auto-create spots from breakdown
+        if spots_config:
+            idx = 1
+            for type_name, count in spots_config.items():
+                spot_type = SpotTypeEnum(type_name)
+                for _ in range(int(count)):
+                    db.session.add(ParkingSpot(
+                        floor_id=floor.floor_id,
+                        spot_type=spot_type,
+                        status=SpotStatusEnum.available,
+                        location_reference=f'{floor_number}-{idx}',
+                    ))
+                    idx += 1
+
         _sync_garage(garage)
         db.session.commit()
         return jsonify(_floor_json(floor)), 201
@@ -152,7 +187,7 @@ def get_floor(floor_id):
 @spaces_bp.route('/floors/<int:floor_id>', methods=['PUT'])
 @require_role('admin')
 def update_floor(floor_id):
-    """Update a floor's name, number, or total spots."""
+    """Update a floor's name, number, total spots, or spot type breakdown."""
     try:
         floor = Floor.query.get(floor_id)
         if not floor:
@@ -162,10 +197,58 @@ def update_floor(floor_id):
             floor.floor_name = data['floorName']
         if 'floorNumber' in data:
             floor.floor_number = data['floorNumber']
-        if 'totalSpots' in data:
+
+        spots_config = data.get('spots')
+        if spots_config:
+            # Validate spot types
+            for type_name in spots_config:
+                try:
+                    SpotTypeEnum(type_name)
+                except ValueError:
+                    return jsonify({"error": "invalid_spot_type", "message": f"Unknown spot type: {type_name}"}), 400
+
+            # Adjust each spot type
+            for type_name, desired in spots_config.items():
+                spot_type = SpotTypeEnum(type_name)
+                desired = int(desired)
+                current_all = ParkingSpot.query.filter_by(floor_id=floor_id, spot_type=spot_type).all()
+                current_count = len(current_all)
+
+                if desired > current_count:
+                    # Add new spots
+                    max_ref = ParkingSpot.query.filter_by(floor_id=floor_id).count()
+                    for i in range(desired - current_count):
+                        max_ref += 1
+                        db.session.add(ParkingSpot(
+                            floor_id=floor_id,
+                            spot_type=spot_type,
+                            status=SpotStatusEnum.available,
+                            location_reference=f'{floor.floor_number}-{max_ref}',
+                        ))
+                elif desired < current_count:
+                    # Remove available spots of this type
+                    to_remove = current_count - desired
+                    available_of_type = [s for s in current_all if s.status == SpotStatusEnum.available]
+                    if len(available_of_type) < to_remove:
+                        return jsonify({
+                            "error": "cannot_reduce_spots",
+                            "message": f"Cannot remove {to_remove} {type_name} spots — only {len(available_of_type)} are unoccupied",
+                        }), 400
+                    for s in available_of_type[:to_remove]:
+                        db.session.delete(s)
+
+            # Recalculate floor totals from actual spot records
+            db.session.flush()
+            total = ParkingSpot.query.filter_by(floor_id=floor_id).count()
+            available = ParkingSpot.query.filter_by(floor_id=floor_id, status=SpotStatusEnum.available).count()
+            floor.total_spots = total
+            floor.available_spots = available
+            garage = Garage.query.get(floor.garage_id)
+            if garage:
+                _sync_garage(garage)
+
+        elif 'totalSpots' in data:
             new_total = data['totalSpots']
-            # Fixed: query counts BEFORE modifying floor to avoid auto-flush
-            # triggering CHECK constraint (available_spots <= total_spots)
             occupied_count = ParkingSpot.query.filter_by(
                 floor_id=floor_id, status=SpotStatusEnum.occupied
             ).count()
@@ -175,12 +258,12 @@ def update_floor(floor_id):
             actual_available = ParkingSpot.query.filter_by(
                 floor_id=floor_id, status=SpotStatusEnum.available
             ).count()
-            # Set both atomically to satisfy CHECK constraint
             floor.total_spots = new_total
             floor.available_spots = min(actual_available, new_total - occupied_count)
             garage = Garage.query.get(floor.garage_id)
             if garage:
                 _sync_garage(garage)
+
         db.session.commit()
         return jsonify(_floor_json(floor)), 200
     except Exception as exc:

@@ -19,6 +19,9 @@ import {
   getPeakHours,
   getCapacityAlert,
   getTicketsByPlate,
+  getActiveTickets,
+  getClosedTickets,
+  overrideTicket,
   exitTicket,
   getPaymentConfig,
   createPaymentIntent,
@@ -32,6 +35,12 @@ import {
   createGarageAPI,
   updateGarageAPI,
   deleteGarageAPI,
+  createFloorAPI,
+  updateFloorAPI,
+  deleteFloorAPI,
+  getFloorSpaces,
+  createSpaceAPI,
+  deleteSpaceAPI,
   setAuthState,
   getStoredToken,
   clearAuthState,
@@ -187,11 +196,26 @@ async function handleEntryFinish() {
 // =============================================================
 
 let _exitTicketData = null;  // stashed after lookup
+let _activeTicketsCache = [];  // cached active tickets for dropdown
+
+async function loadActiveTickets() {
+  const select = document.getElementById('exit-plate');
+  try {
+    const tickets = await getActiveTickets();
+    _activeTicketsCache = tickets || [];
+    select.innerHTML = '<option value="">— Select a vehicle —</option>';
+    _activeTicketsCache.forEach(t => {
+      const entry = new Date(t.entryTime).toLocaleString();
+      select.innerHTML += `<option value="${t.ticketId}">${escapeHtml(t.licensePlate)} — Floor ${t.assignedFloor} — ${entry}</option>`;
+    });
+  } catch (_e) {
+    select.innerHTML = '<option value="">Failed to load tickets</option>';
+  }
+}
 
 async function handleExitLookup() {
-  const plate = document.getElementById('exit-plate').value.trim();
-  if (!plate) { alert('Please enter a license plate number.'); return; }
-  if (!isValidPlate(plate)) { alert('Invalid plate format. Use 2-10 letters/numbers (hyphens OK).'); return; }
+  const ticketId = document.getElementById('exit-plate').value;
+  if (!ticketId) { alert('Please select a vehicle from the dropdown.'); return; }
 
   const btn = document.getElementById('btn-exit-lookup');
   setLoading(btn, true);
@@ -201,13 +225,12 @@ async function handleExitLookup() {
   result.style.display = 'none';
 
   try {
-    const tickets = await getTicketsByPlate(plate);
-    if (!tickets || tickets.length === 0) {
-      showFeedback(result, 'No active ticket found for this plate.', true);
+    const t = _activeTicketsCache.find(t => String(t.ticketId) === ticketId);
+    if (!t) {
+      showFeedback(result, 'Ticket not found. Try refreshing.', true);
       _exitTicketData = null;
       return;
     }
-    const t = tickets[0];
     _exitTicketData = t;
     document.getElementById('exit-ticket-id').textContent = t.ticketId;
     document.getElementById('exit-entry-time').textContent = new Date(t.entryTime).toLocaleString();
@@ -328,6 +351,7 @@ async function handleStripePayment(exitRes) {
 
 function resetExitPanel() {
   _exitTicketData = null;
+  document.getElementById('exit-plate').value = '';
   document.getElementById('exit-ticket-info').style.display = 'none';
   document.getElementById('exit-card-wrap').style.display = 'none';
   document.getElementById('exit-fee-row').style.display = 'none';
@@ -335,6 +359,7 @@ function resetExitPanel() {
   payBtn.style.display = 'none';
   document.getElementById('btn-exit-process').style.display = '';
   if (cardElement) { cardElement.destroy(); cardElement = null; }
+  loadActiveTickets();
 }
 
 function handleExitPaymentChange() {
@@ -847,6 +872,64 @@ async function loadAuditHistory(page = 1) {
 
 
 // =============================================================
+//  DASHBOARD — Ticket Overrides (Reopen Cash Tickets)
+// =============================================================
+
+async function searchClosedTickets() {
+  const container = document.getElementById('override-results');
+  const query = document.getElementById('override-search').value.trim();
+  if (!query) { container.innerHTML = '<div style="color:var(--text-muted);">Enter a plate or ticket ID to search.</div>'; return; }
+
+  container.innerHTML = '<div style="color:var(--text-muted);">Searching...</div>';
+  try {
+    const tickets = await getClosedTickets();
+    const matches = (tickets || []).filter(t => {
+      const q = query.toLowerCase();
+      return String(t.ticketId) === query || (t.licensePlate && t.licensePlate.toLowerCase().includes(q));
+    });
+
+    if (!matches.length) { container.innerHTML = '<div style="color:var(--text-muted);">No closed tickets found.</div>'; return; }
+
+    const rows = matches.map(t => {
+      const exit = t.exitTime ? new Date(t.exitTime).toLocaleString() : '—';
+      const isCash = t.paymentMethod === 'cash';
+      const reopenBtn = isCash
+        ? `<button class="btn btn-primary btn-sm" data-action="reopen-ticket" data-id="${t.ticketId}">Reopen</button>`
+        : `<span style="color:var(--text-muted); font-size:12px;">${escapeHtml(t.paymentMethod || 'n/a')}</span>`;
+      return `<tr>
+        <td>${t.ticketId}</td>
+        <td>${escapeHtml(t.licensePlate || '—')}</td>
+        <td>Floor ${t.assignedFloor || '—'}</td>
+        <td>${exit}</td>
+        <td>$${t.totalFee != null ? Number(t.totalFee).toFixed(2) : '—'}</td>
+        <td>${reopenBtn}</td>
+      </tr>`;
+    }).join('');
+
+    container.innerHTML = `
+      <table><thead><tr>
+        <th>ID</th><th>Plate</th><th>Floor</th><th>Exit Time</th><th>Fee</th><th>Action</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (err) {
+    container.innerHTML = `<div style="color:var(--danger);">Failed to search: ${err.message}</div>`;
+  }
+}
+
+async function handleReopenTicket(ticketId) {
+  if (!confirm(`Reopen ticket #${ticketId}? This will reverse the cash payment and re-activate the ticket.`)) return;
+  const container = document.getElementById('override-results');
+  try {
+    await overrideTicket(ticketId, { action: 'reopen', reason: 'Operator correction via admin panel' });
+    showToast(`Ticket #${ticketId} reopened successfully.`, 'success');
+    searchClosedTickets();
+    loadActiveTickets(); // refresh exit dropdown
+  } catch (err) {
+    showToast(`Failed to reopen: ${err.message}`, 'error');
+  }
+}
+
+
+// =============================================================
 //  DASHBOARD — Garage Config
 // =============================================================
 
@@ -868,9 +951,11 @@ async function loadGarageConfig() {
       <div class="zone-row"><span class="zone-key">Operating Hours</span><span class="zone-val">${escapeHtml(g.operatingHours)}</span></div>
       <div class="zone-row"><span class="zone-key">Phone</span><span class="zone-val">${escapeHtml(g.frontDeskPhone || '—')}</span></div>`;
     currentSection.dataset.garageId = g.garageId;
+    loadFloorConfig(g.garageId);
   } catch (_e) {
     currentSection.style.display = 'none';
     _currentGarage = null;
+    document.getElementById('cfg-floors-section').style.display = 'none';
   }
 }
 
@@ -958,6 +1043,243 @@ async function handleCreateGarage() {
 
 
 // =============================================================
+//  FLOOR MANAGEMENT — config tab
+// =============================================================
+
+const SPOT_TYPES = ['standard', 'accessibility', 'staff', 'eco'];
+
+async function loadFloorConfig(garageId) {
+  const section = document.getElementById('cfg-floors-section');
+  if (!garageId) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+
+  try {
+    const floors = await getAllFloors(garageId);
+    const container = document.getElementById('cfg-floors-list');
+
+    if (!floors.length) {
+      container.innerHTML = '<div style="color:var(--muted); padding:8px 0; font-size:13px;">No floors configured yet. Add one below.</div>';
+      return;
+    }
+
+    // Fetch spot details for each floor in parallel
+    const spotsPerFloor = await Promise.all(floors.map(f => getFloorSpaces(f.floorId).catch(() => [])));
+
+    container.innerHTML = '';
+    floors.sort((a, b) => a.floorNumber - b.floorNumber);
+    floors.forEach((f, i) => {
+      const spots = spotsPerFloor[i] || [];
+      const occupied = f.totalSpots - f.availableSpots;
+      const pct = f.totalSpots ? Math.round((occupied / f.totalSpots) * 100) : 0;
+      const typeCounts = {};
+      SPOT_TYPES.forEach(t => { typeCounts[t] = 0; });
+      spots.forEach(s => { if (typeCounts[s.spotType] !== undefined) typeCounts[s.spotType]++; });
+
+      const typeBreakdown = SPOT_TYPES
+        .filter(t => typeCounts[t] > 0)
+        .map(t => `${typeCounts[t]} ${t}`)
+        .join(', ') || 'no spots';
+
+      const hasOccupied = occupied > 0;
+
+      container.innerHTML += `
+        <div class="zone-card" style="margin-bottom:10px;" data-floor-id="${f.floorId}">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="zone-card-title">${escapeHtml(f.floorName || 'Floor ' + f.floorNumber)}</div>
+            <div style="display:flex; gap:4px;">
+              <button class="btn btn-secondary btn-sm" data-action="edit-floor" data-floor-id="${f.floorId}"
+                      data-floor-name="${escapeHtml(f.floorName || '')}" data-floor-number="${f.floorNumber}"
+                      data-total-spots="${f.totalSpots}"
+                      data-type-counts='${JSON.stringify(typeCounts)}'>Edit</button>
+              <button class="btn btn-secondary btn-sm btn-danger-text" data-action="delete-floor"
+                      data-floor-id="${f.floorId}" ${hasOccupied ? 'disabled title="Has occupied spots"' : ''}>Delete</button>
+            </div>
+          </div>
+          <div class="zone-row"><span class="zone-key">Floor #</span><span class="zone-val">${f.floorNumber}</span></div>
+          <div class="zone-row"><span class="zone-key">Spots</span><span class="zone-val">${occupied} / ${f.totalSpots} occupied (${pct}%)</span></div>
+          <div class="zone-row"><span class="zone-key">Types</span><span class="zone-val">${typeBreakdown}</span></div>
+          <div style="margin-top:8px; display:flex; gap:4px; align-items:center;">
+            <button class="btn btn-secondary btn-sm" data-action="toggle-spots" data-floor-id="${f.floorId}">Manage Spots</button>
+          </div>
+          <div class="floor-spots-detail" id="floor-spots-${f.floorId}" style="display:none; margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
+            <div style="display:flex; gap:4px; margin-bottom:8px; align-items:center;">
+              <select data-action="spot-type-select" data-floor-id="${f.floorId}" style="padding:4px 8px; border-radius:var(--radius); border:1px solid var(--border); font-size:12px;">
+                ${SPOT_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}
+              </select>
+              <button class="btn btn-primary btn-sm" data-action="add-spot" data-floor-id="${f.floorId}">Add Spot</button>
+            </div>
+            <div class="floor-spots-list" data-floor-id="${f.floorId}">
+              ${spots.length ? spots.map(s => `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; border-bottom:1px solid var(--border); font-size:12px;">
+                  <span>${escapeHtml(s.locationReference || 'Spot ' + s.spotId)} — <em>${s.spotType}</em> — ${s.status}</span>
+                  <button class="btn btn-secondary btn-sm btn-danger-text" data-action="delete-spot"
+                          data-floor-id="${f.floorId}" data-spot-id="${s.spotId}"
+                          ${s.status === 'occupied' ? 'disabled title="Occupied"' : ''}
+                          style="padding:1px 6px; font-size:11px;">×</button>
+                </div>`).join('') : '<div style="color:var(--muted); font-size:12px;">No spots. Add one above.</div>'}
+            </div>
+          </div>
+        </div>`;
+    });
+  } catch (err) {
+    document.getElementById('cfg-floors-list').innerHTML =
+      `<div style="color:var(--danger); font-size:13px;">Failed to load floors: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+let _editingFloorId = null;
+
+function _readFloorForm() {
+  return {
+    name: document.getElementById('cfg-floor-name').value.trim(),
+    number: parseInt(document.getElementById('cfg-floor-number').value, 10),
+    spots: {
+      standard: parseInt(document.getElementById('cfg-floor-standard').value, 10) || 0,
+      accessibility: parseInt(document.getElementById('cfg-floor-accessibility').value, 10) || 0,
+      staff: parseInt(document.getElementById('cfg-floor-staff').value, 10) || 0,
+      eco: parseInt(document.getElementById('cfg-floor-eco').value, 10) || 0,
+    },
+  };
+}
+
+function _clearFloorForm() {
+  document.getElementById('cfg-floor-name').value = '';
+  document.getElementById('cfg-floor-number').value = '';
+  SPOT_TYPES.forEach(t => { document.getElementById(`cfg-floor-${t}`).value = '0'; });
+  _editingFloorId = null;
+  document.getElementById('cfg-floor-form-title').textContent = 'Add Floor';
+  document.getElementById('btn-cfg-add-floor').textContent = 'Add Floor';
+  document.getElementById('btn-cfg-add-floor').dataset.label = 'Add Floor';
+  document.getElementById('btn-cfg-cancel-floor').style.display = 'none';
+}
+
+async function handleAddFloor() {
+  if (!_currentGarage) { alert('Create a garage first.'); return; }
+  const { name, number, spots } = _readFloorForm();
+  const total = spots.standard + spots.accessibility + spots.staff + spots.eco;
+  const result = document.getElementById('cfg-floor-result');
+
+  if (isNaN(number)) {
+    showFeedback(result, 'Floor # is required.', true);
+    return;
+  }
+  if (total < 1) {
+    showFeedback(result, 'At least one spot is required.', true);
+    return;
+  }
+
+  try {
+    if (_editingFloorId) {
+      const payload = { floorName: name || null, spots };
+      await updateFloorAPI(_editingFloorId, payload);
+      showFeedback(result, 'Floor updated.', false);
+      _clearFloorForm();
+    } else {
+      await createFloorAPI({
+        garageId: _currentGarage.garageId,
+        floorNumber: number,
+        floorName: name || null,
+        spots,
+      });
+      showFeedback(result, `Floor ${number} added.`, false);
+      _clearFloorForm();
+    }
+    await loadFloorConfig(_currentGarage.garageId);
+    await loadGarageConfig();
+  } catch (err) {
+    showFeedback(result, `Failed: ${err.message}`, true);
+  }
+}
+
+function startEditFloor(floorId, floorName, floorNumber, typeCounts) {
+  _editingFloorId = floorId;
+  document.getElementById('cfg-floor-name').value = floorName || '';
+  document.getElementById('cfg-floor-number').value = floorNumber;
+  document.getElementById('cfg-floor-number').disabled = true;
+  SPOT_TYPES.forEach(t => {
+    document.getElementById(`cfg-floor-${t}`).value = typeCounts[t] || 0;
+  });
+  document.getElementById('cfg-floor-form-title').textContent = `Edit Floor ${floorNumber}`;
+  document.getElementById('btn-cfg-add-floor').textContent = 'Update Floor';
+  document.getElementById('btn-cfg-add-floor').dataset.label = 'Update Floor';
+  document.getElementById('btn-cfg-cancel-floor').style.display = '';
+  document.getElementById('cfg-floor-form').scrollIntoView({ behavior: 'smooth' });
+}
+
+function cancelEditFloor() {
+  document.getElementById('cfg-floor-number').disabled = false;
+  _clearFloorForm();
+}
+
+async function handleDeleteFloor(floorId) {
+  if (!confirm('Delete this floor and all its spots?')) return;
+  const result = document.getElementById('cfg-floor-result');
+  try {
+    await deleteFloorAPI(floorId);
+    showFeedback(result, 'Floor deleted.', false);
+    await loadFloorConfig(_currentGarage.garageId);
+    await loadGarageConfig();
+  } catch (err) {
+    showFeedback(result, `Delete failed: ${err.message}`, true);
+  }
+}
+
+async function handleAddSpot(floorId) {
+  const select = document.querySelector(`select[data-action="spot-type-select"][data-floor-id="${floorId}"]`);
+  const spotType = select ? select.value : 'standard';
+  const result = document.getElementById('cfg-floor-result');
+  try {
+    await createSpaceAPI(floorId, { type: spotType });
+    showFeedback(result, `${spotType} spot added.`, false);
+    await loadFloorConfig(_currentGarage.garageId);
+  } catch (err) {
+    showFeedback(result, `Add spot failed: ${err.message}`, true);
+  }
+}
+
+async function handleDeleteSpot(floorId, spotId) {
+  if (!confirm('Delete this spot?')) return;
+  const result = document.getElementById('cfg-floor-result');
+  try {
+    await deleteSpaceAPI(floorId, spotId);
+    showFeedback(result, 'Spot deleted.', false);
+    await loadFloorConfig(_currentGarage.garageId);
+  } catch (err) {
+    showFeedback(result, `Delete failed: ${err.message}`, true);
+  }
+}
+
+function setupFloorConfigListeners() {
+  document.getElementById('btn-cfg-add-floor').addEventListener('click', handleAddFloor);
+  document.getElementById('btn-cfg-cancel-floor').addEventListener('click', () => {
+    document.getElementById('cfg-floor-number').disabled = false;
+    cancelEditFloor();
+  });
+
+  document.getElementById('cfg-floors-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const floorId = btn.dataset.floorId;
+
+    if (action === 'edit-floor') {
+      const typeCounts = JSON.parse(btn.dataset.typeCounts || '{}');
+      startEditFloor(floorId, btn.dataset.floorName, parseInt(btn.dataset.floorNumber), typeCounts);
+    } else if (action === 'delete-floor') {
+      handleDeleteFloor(floorId);
+    } else if (action === 'toggle-spots') {
+      const detail = document.getElementById(`floor-spots-${floorId}`);
+      if (detail) detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+    } else if (action === 'add-spot') {
+      handleAddSpot(floorId);
+    } else if (action === 'delete-spot') {
+      handleDeleteSpot(floorId, btn.dataset.spotId);
+    }
+  });
+}
+
+
+// =============================================================
 //  CONGESTION ALERT — polls /v1/capacity/alert
 // =============================================================
 
@@ -998,6 +1320,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Exit
+  loadActiveTickets();
+  document.getElementById('btn-exit-refresh')
+    .addEventListener('click', loadActiveTickets);
   document.getElementById('btn-exit-lookup')
     .addEventListener('click', handleExitLookup);
   document.getElementById('btn-exit-process')
@@ -1031,6 +1356,15 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-staff-create')
     .addEventListener('click', handleCreateStaff);
 
+  // Ticket overrides
+  document.getElementById('btn-override-search')
+    .addEventListener('click', searchClosedTickets);
+  document.getElementById('override-results')
+    .addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action="reopen-ticket"]');
+      if (btn) handleReopenTicket(parseInt(btn.dataset.id, 10));
+    });
+
   // Audit filter
   document.getElementById('btn-audit-filter')
     .addEventListener('click', loadAuditHistory);
@@ -1044,4 +1378,7 @@ document.addEventListener('DOMContentLoaded', () => {
     .addEventListener('click', handleDeleteGarage);
   document.getElementById('btn-cfg-cancel-edit')
     .addEventListener('click', cancelEditGarage);
+
+  // Floor config
+  setupFloorConfigListeners();
 });

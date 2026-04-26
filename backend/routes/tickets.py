@@ -16,7 +16,7 @@ from flask import Blueprint, request, jsonify
 
 from utils import (
     log_error, calculate_duration, calculate_fee,
-    release_spot, assign_spot, VALID_DRIVER_CLASSES,
+    release_spot, assign_spot, VALID_DRIVER_CLASSES, _DRIVER_CLASS_TO_SPOT_TYPE,
     login_required, require_role,
 )
 
@@ -35,7 +35,7 @@ _VALID_PAYMENT_METHODS = {'cash', 'card', 'mobile'}
 # ------------------------------------------------------------------
 
 def _ticket_json(ticket):
-    from models import ParkingSpot, Floor, Vehicle
+    from models import ParkingSpot, Floor, Vehicle, Payment
 
     spot = ParkingSpot.query.get(ticket.spot_id)
     floor = Floor.query.get(spot.floor_id) if spot else None
@@ -46,7 +46,7 @@ def _ticket_json(ticket):
             'error': 'incomplete_record',
             'status': ticket.status.value,
         }
-    return {
+    result = {
         'ticketId':      ticket.ticket_id,
         'licensePlate':  vehicle.license_plate,
         'phone':         ticket.phone,
@@ -58,6 +58,10 @@ def _ticket_json(ticket):
         'totalFee':      float(ticket.total_fee) if ticket.total_fee is not None else None,
         'status':        ticket.status.value,
     }
+    payment = Payment.query.filter_by(ticket_id=ticket.ticket_id).first()
+    if payment:
+        result['paymentMethod'] = payment.payment_method.value
+    return result
 
 
 # ------------------------------------------------------------------
@@ -114,13 +118,22 @@ def post_ticket():
             return jsonify({'error': 'duplicate_plate', 'message': 'Vehicle already has an active ticket'}), 409
 
         # Assign spot (prefers lowest floor number, filtered by vehicle type)
-        spot, floor = assign_spot(
+        spot, floor, reason = assign_spot(
             driver_class,
             vehicle_type=vehicle.vehicle_type.value,
             garage_id=garage_id,
         )
         if not spot:
-            return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
+            spot_type = _DRIVER_CLASS_TO_SPOT_TYPE.get(driver_class, driver_class)
+            messages = {
+                'no_spot_type': f'No {spot_type} spots exist in this garage',
+                'spots_occupied': f'All {spot_type} spots are currently occupied',
+                'vehicle_incompatible': f'Vehicle type is not compatible with {spot_type} spots',
+                'reservation_conflict': f'All {spot_type} spots conflict with existing reservations',
+            }
+            msg = messages.get(reason, 'Garage is full — no available spots')
+            error_key = 'no_spot_type' if reason == 'no_spot_type' else 'garage_full'
+            return jsonify({'error': error_key, 'message': msg}), 503
 
         # Fixed: resolve entry gate (entry_gate_id is NOT NULL per schema.sq1)
         garage_id = floor.garage_id
@@ -443,10 +456,10 @@ def override_ticket(ticket_id):
     action = data.get('action')
     reason = data.get('reason', '')
 
-    if action not in ('force_close', 'void', 'correct_spot'):
+    if action not in ('force_close', 'void', 'correct_spot', 'reopen'):
         return jsonify({
             'error': 'invalid_action',
-            'message': 'action must be force_close, void, or correct_spot',
+            'message': 'action must be force_close, void, correct_spot, or reopen',
         }), 400
 
     try:
@@ -491,6 +504,52 @@ def override_ticket(ticket_id):
                     change_type=OccupancyChangeEnum.occupied,
                 ))
             ticket.spot_id = new_spot.spot_id
+
+        elif action == 'reopen':
+            if ticket.status != TicketStatusEnum.closed:
+                return jsonify({'error': 'invalid_state', 'message': 'Only closed tickets can be reopened'}), 409
+            # Only allow reopening cash-paid tickets
+            from models import Payment, PaymentMethodEnum, PaymentStatusEnum
+            payment = Payment.query.filter_by(ticket_id=ticket.ticket_id).first()
+            if not payment or payment.payment_method != PaymentMethodEnum.cash:
+                return jsonify({'error': 'invalid_payment', 'message': 'Only cash-paid tickets can be reopened'}), 409
+            # Try to re-occupy the original spot
+            from models import ParkingSpot, SpotStatusEnum, Floor, OccupancyLog, OccupancyChangeEnum
+            spot = ParkingSpot.query.get(ticket.spot_id)
+            if not spot or spot.status != SpotStatusEnum.available:
+                # Original spot taken — try to assign a new one
+                vehicle = ticket.vehicle
+                driver_class = data.get('driverClass', 'standard')
+                garage_id = None
+                if spot:
+                    floor = Floor.query.get(spot.floor_id)
+                    garage_id = floor.garage_id if floor else None
+                new_spot, new_floor, fail_reason = assign_spot(
+                    driver_class,
+                    vehicle_type=vehicle.vehicle_type.value if vehicle else 'car',
+                    garage_id=garage_id,
+                )
+                if not new_spot:
+                    return jsonify({'error': 'garage_full', 'message': 'Cannot reopen — no available spots'}), 503
+                ticket.spot_id = new_spot.spot_id
+            else:
+                # Re-occupy original spot
+                spot.status = SpotStatusEnum.occupied
+                floor = Floor.query.get(spot.floor_id)
+                if floor:
+                    floor.available_spots = max(0, floor.available_spots - 1)
+                db.session.add(OccupancyLog(
+                    spot_id=spot.spot_id,
+                    changed_at=datetime.utcnow(),
+                    change_type=OccupancyChangeEnum.occupied,
+                ))
+            # Reset ticket to active
+            ticket.status = TicketStatusEnum.active
+            ticket.exit_timestamp = None
+            ticket.duration = None
+            ticket.total_fee = None
+            # Remove cash payment
+            db.session.delete(payment)
 
         db.session.add(SystemEvent(
             staff_id=g.current_user.operator_id,

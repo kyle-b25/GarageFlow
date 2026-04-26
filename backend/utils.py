@@ -265,7 +265,13 @@ def assign_spot(driver_class, arrival_datetime=None, vehicle_type=None, garage_i
                           considered.
         garage_id:        Optional int — restrict search to a single garage.
 
-    Returns (spot, floor) on success, or (None, None) if garage is full.
+    Returns (spot, floor, reason) on success or failure.
+    reason is None on success, or one of:
+      'garage_full'        — no floors with available spots
+      'no_spot_type'       — no spots of the requested type exist in the garage
+      'spots_occupied'     — spots of the type exist but are all occupied
+      'reservation_conflict' — all candidates conflict with reservations
+      'vehicle_incompatible' — vehicle type incompatible with spot type
     """
     from models import (
         Floor, ParkingSpot, Reservation,
@@ -279,20 +285,31 @@ def assign_spot(driver_class, arrival_datetime=None, vehicle_type=None, garage_i
     if vehicle_type:
         compatible = _VEHICLE_TYPE_COMPATIBLE_SPOTS.get(vehicle_type)
         if compatible and spot_type_val.value not in compatible:
-            return None, None
+            return None, None, 'vehicle_incompatible'
 
     floor_q = Floor.query.filter(Floor.available_spots > 0)
     if garage_id is not None:
         floor_q = floor_q.filter(Floor.garage_id == garage_id)
     floors = [f for f in floor_q.all() if f.total_spots > 0]
     if not floors:
-        return None, None
+        return None, None, 'garage_full'
 
     floors.sort(key=lambda f: f.floor_number)
 
     matching_driver_classes = _SPOT_TYPE_TO_DRIVER_CLASSES.get(
         spot_type_val.value, set()
     )
+
+    # Check if any spots of this type exist at all (regardless of status)
+    type_exists_q = ParkingSpot.query.join(Floor).filter(
+        ParkingSpot.spot_type == spot_type_val,
+    )
+    if garage_id is not None:
+        type_exists_q = type_exists_q.filter(Floor.garage_id == garage_id)
+    type_exists = type_exists_q.first() is not None
+
+    if not type_exists:
+        return None, None, 'no_spot_type'
 
     found_type_match = False
 
@@ -310,7 +327,7 @@ def assign_spot(driver_class, arrival_datetime=None, vehicle_type=None, garage_i
 
         # No conflict check needed — return first candidate
         if not arrival_datetime or not matching_driver_classes:
-            return candidates[0], floor
+            return candidates[0], floor, None
 
         # Reservation conflict filtering (±30 min window)
         from datetime import timedelta
@@ -331,9 +348,11 @@ def assign_spot(driver_class, arrival_datetime=None, vehicle_type=None, garage_i
         )
 
         if len(candidates) - conflicting_count > 0:
-            return candidates[0], floor
+            return candidates[0], floor, None
 
-    return None, None
+    if not found_type_match:
+        return None, None, 'spots_occupied'
+    return None, None, 'reservation_conflict'
 
 
 def validate_and_assign_spot(garage_id, spot_type, arrival_datetime=None):
@@ -399,12 +418,15 @@ def validate_and_assign_spot(garage_id, spot_type, arrival_datetime=None):
         )
     driver_class = next(iter(matching_classes))
 
-    spot, floor = assign_spot(driver_class, arrival_datetime=arrival_datetime)
+    spot, floor, reason = assign_spot(driver_class, arrival_datetime=arrival_datetime)
     if spot:
         return spot
 
-    # assign_spot returned None — must be a conflict
-    if arrival_datetime:
+    if reason == 'no_spot_type':
+        raise NoSpotAvailableError(
+            f"No {spot_type.value} spots exist in garage {garage_id}"
+        )
+    if reason == 'reservation_conflict':
         raise ReservationConflictError(
             f"All {spot_type.value} spots conflict with confirmed reservations"
         )

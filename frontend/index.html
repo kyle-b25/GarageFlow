@@ -399,10 +399,15 @@
       <div class="panel-title">Vehicle Exit</div>
 
       <div class="field">
-        <label for="exit-plate">License Plate</label>
-        <input type="text" id="exit-plate" placeholder="e.g. ABC-1234">
+        <label for="exit-plate">Active Tickets</label>
+        <div class="select-wrap">
+          <select id="exit-plate">
+            <option value="">— Select a vehicle —</option>
+          </select>
+        </div>
       </div>
       <div style="margin-top:10px; display:flex; gap:8px; justify-content:flex-end;">
+        <button class="btn btn-secondary" id="btn-exit-refresh" data-label="Refresh" style="font-size:12px;">Refresh</button>
         <button class="btn btn-secondary" id="btn-exit-lookup" data-label="Look Up Ticket">Look Up Ticket</button>
       </div>
 
@@ -571,6 +576,7 @@
         <div class="tab-bar">
           <button class="tab-btn active" data-tab="tab-analytics">Analytics</button>
           <button class="tab-btn" data-tab="tab-staff">Staff</button>
+          <button class="tab-btn" data-tab="tab-overrides">Overrides</button>
           <button class="tab-btn" data-tab="tab-audit">Audit Log</button>
           <button class="tab-btn" data-tab="tab-config">Config</button>
         </div>
@@ -630,6 +636,24 @@
           <div id="staff-list" class="res-table-wrap" style="border:none;"></div>
         </div>
 
+        <!-- ── Tab: Ticket Overrides ── -->
+        <div id="tab-overrides" class="tab-content">
+          <div class="sub-title">Reopen Cash-Paid Ticket</div>
+          <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+            Search closed tickets to reopen one paid with cash (e.g. wrong license plate entered).
+          </p>
+          <div style="display:grid; grid-template-columns:1fr auto; gap:8px; align-items:end; margin-bottom:12px;">
+            <div class="field" style="margin-bottom:0">
+              <label for="override-search">Search by plate or ticket ID</label>
+              <input type="text" id="override-search" placeholder="e.g. ABC123 or 42">
+            </div>
+            <div style="align-self:flex-end;">
+              <button class="btn btn-secondary btn-sm" id="btn-override-search" data-label="Search">Search</button>
+            </div>
+          </div>
+          <div id="override-results" class="res-table-wrap" style="border:none;"></div>
+        </div>
+
         <!-- ── Tab: Audit Log ── -->
         <div id="tab-audit" class="tab-content">
           <div style="display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:8px; align-items:end; margin-bottom:12px;">
@@ -662,6 +686,49 @@
               <button class="btn btn-secondary btn-sm" id="btn-cfg-edit" data-label="Edit">Edit</button>
               <button class="btn btn-secondary btn-sm btn-danger-text" id="btn-cfg-delete" data-label="Delete">Delete</button>
             </div>
+          </div>
+
+          <!-- Floor management -->
+          <div id="cfg-floors-section" style="display:none; margin-bottom:16px;">
+            <div class="sub-title">Floors</div>
+            <div id="cfg-floors-list"></div>
+            <div id="cfg-floor-form" style="margin-top:12px; padding:12px; border:1px solid var(--border); border-radius:var(--radius);">
+              <div style="font-weight:600; margin-bottom:8px; font-size:13px;" id="cfg-floor-form-title">Add Floor</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div class="field">
+                  <label for="cfg-floor-name">Name</label>
+                  <input type="text" id="cfg-floor-name" placeholder="e.g. Basement">
+                </div>
+                <div class="field">
+                  <label for="cfg-floor-number">Floor #</label>
+                  <input type="number" id="cfg-floor-number" placeholder="1" min="0">
+                </div>
+              </div>
+              <div style="font-weight:600; margin:10px 0 6px; font-size:12px; color:var(--muted);">Spot Types</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:8px;">
+                <div class="field">
+                  <label for="cfg-floor-standard">Standard</label>
+                  <input type="number" id="cfg-floor-standard" value="0" min="0">
+                </div>
+                <div class="field">
+                  <label for="cfg-floor-accessibility">Accessibility</label>
+                  <input type="number" id="cfg-floor-accessibility" value="0" min="0">
+                </div>
+                <div class="field">
+                  <label for="cfg-floor-staff">Staff</label>
+                  <input type="number" id="cfg-floor-staff" value="0" min="0">
+                </div>
+                <div class="field">
+                  <label for="cfg-floor-eco">Eco</label>
+                  <input type="number" id="cfg-floor-eco" value="0" min="0">
+                </div>
+              </div>
+              <div style="margin-top:10px; display:flex; gap:8px; justify-content:flex-end;">
+                <button class="btn btn-secondary btn-sm" id="btn-cfg-cancel-floor" style="display:none;" data-label="Cancel">Cancel</button>
+                <button class="btn btn-primary btn-sm" id="btn-cfg-add-floor" data-label="Add Floor">Add Floor</button>
+              </div>
+            </div>
+            <div id="cfg-floor-result" style="display:none; margin-top:10px; padding:10px; border-radius:var(--radius); font-size:13px;"></div>
           </div>
 
           <!-- Create / Edit form -->
