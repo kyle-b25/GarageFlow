@@ -1,0 +1,37 @@
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env}
+      - DATABASE_URL=sqlite:///database.db
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+    volumes:
+      - db-data:/app/backend/instance
+    restart: unless-stopped
+
+  dev:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - SECRET_KEY=dev-secret-change-in-production
+      - DATABASE_URL=sqlite:///database.db
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - db-data:/app/backend/instance
+    command: flask run --host=0.0.0.0
+    profiles:
+      - dev
+
+volumes:
+  db-data:

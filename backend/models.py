@@ -296,7 +296,7 @@ class SessionToken(db.Model):
     __tablename__ = "session_token"
 
     id         = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    staff_id   = db.Column(db.Integer, db.ForeignKey('staff.operator_id'), nullable=False)
+    staff_id   = db.Column(db.Integer, db.ForeignKey('staff.operator_id', ondelete='CASCADE'), nullable=False)  # CASCADE: deleting staff removes their tokens
     token      = db.Column(db.String(64), unique=True, nullable=False, index=True)
     created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
     expires_at = db.Column(db.DateTime, nullable=False)
@@ -395,6 +395,7 @@ class Reservation(db.Model):
     reservation_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     customer_id    = db.Column(db.Integer, db.ForeignKey("customer.customer_id", onupdate="CASCADE", ondelete="RESTRICT"), nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5
     vehicle_id     = db.Column(db.Integer, db.ForeignKey("vehicle.vehicle_id", onupdate="CASCADE", ondelete="RESTRICT"),   nullable=False)  # Fixed: nullable=True->False, added onupdate/ondelete per schema.sq1/Task5
+    garage_id      = db.Column(db.Integer, db.ForeignKey("garage.garage_id", onupdate="CASCADE", ondelete="SET NULL"), nullable=True)  # Multi-garage scoping
     phone          = db.Column(db.String(20),  nullable=True)
     driver_class   = db.Column(db.String(20),  nullable=True)
     floor_number   = db.Column(db.Integer,     nullable=True)
@@ -493,3 +494,16 @@ class LoginAttempt(db.Model):
     ip_address   = db.Column(db.String(45), primary_key=True)  # IPv6 max length
     fail_count   = db.Column(db.Integer, nullable=False, default=0)
     window_start = db.Column(db.DateTime, nullable=False)
+
+
+class ProcessedWebhookEvent(db.Model):
+    """
+    Idempotency table for Stripe webhook deduplication.
+    The unique constraint on event_id prevents TOCTOU races when
+    two identical webhook deliveries arrive simultaneously.
+    """
+    __tablename__ = "processed_webhook_event"
+
+    id         = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    event_id   = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())

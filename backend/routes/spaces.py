@@ -12,7 +12,7 @@ from models import (
     SpotTypeEnum, SpotStatusEnum, TicketStatusEnum,
     OccupancyLog, OccupancyChangeEnum,
 )
-from utils import log_error
+from utils import log_error, require_role
 
 spaces_bp = Blueprint('spaces', __name__, url_prefix='/v1')
 
@@ -52,9 +52,13 @@ def _sync_garage(garage):
 
 @spaces_bp.route('/spaces', methods=['GET'])
 def list_spaces():
-    """List all parking spaces."""
+    """List all parking spaces. Optional query param: garage_id."""
     try:
-        spots = ParkingSpot.query.all()
+        q = ParkingSpot.query
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        spots = q.all()
         return jsonify([_space_json(s) for s in spots]), 200
     except Exception as exc:
         log_error('spaces.list_spaces', str(exc))
@@ -63,9 +67,12 @@ def list_spaces():
 
 @spaces_bp.route('/spaces/available', methods=['GET'])
 def list_available_spaces():
-    """List available parking spaces, optionally filtered by spot type."""
+    """List available parking spaces, optionally filtered by spot type and garage_id."""
     try:
         q = ParkingSpot.query.filter(ParkingSpot.status == SpotStatusEnum.available)
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
         type_param = request.args.get('type')
         if type_param:
             try:
@@ -84,9 +91,13 @@ def list_available_spaces():
 
 @spaces_bp.route('/floors', methods=['GET'])
 def list_floors():
-    """List all floors."""
+    """List all floors. Optional query param: garage_id."""
     try:
-        floors = Floor.query.all()
+        q = Floor.query
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.filter(Floor.garage_id == garage_id)
+        floors = q.all()
         return jsonify([_floor_json(f) for f in floors]), 200
     except Exception as exc:
         log_error('spaces.list_floors', str(exc))
@@ -94,6 +105,7 @@ def list_floors():
 
 
 @spaces_bp.route('/floors', methods=['POST'])
+@require_role('admin')
 def create_floor():
     """Create a new floor for a garage."""
     try:
@@ -138,6 +150,7 @@ def get_floor(floor_id):
 
 
 @spaces_bp.route('/floors/<int:floor_id>', methods=['PUT'])
+@require_role('admin')
 def update_floor(floor_id):
     """Update a floor's name, number, or total spots."""
     try:
@@ -177,6 +190,7 @@ def update_floor(floor_id):
 
 
 @spaces_bp.route('/floors/<int:floor_id>', methods=['DELETE'])
+@require_role('admin')
 def delete_floor(floor_id):
     """Delete a floor if it has no occupied spots or active tickets."""
     try:
@@ -233,6 +247,7 @@ def list_floor_spaces(floor_id):
 
 
 @spaces_bp.route('/floors/<int:floor_id>/spaces', methods=['POST'])
+@require_role('admin')
 def create_space(floor_id):
     """Create a new parking space on a floor."""
     try:
@@ -286,6 +301,7 @@ def get_space(floor_id, space_id):
 
 
 @spaces_bp.route('/floors/<int:floor_id>/spaces/<int:space_id>', methods=['PUT'])
+@require_role('admin')
 def update_space(floor_id, space_id):
     """Update a parking space's type, location reference, or status."""
     try:
@@ -336,6 +352,7 @@ def update_space(floor_id, space_id):
 
 
 @spaces_bp.route('/floors/<int:floor_id>/spaces/<int:space_id>', methods=['DELETE'])
+@require_role('admin')
 def delete_space(floor_id, space_id):
     """Delete a parking space if it is not occupied and has no active tickets."""
     try:

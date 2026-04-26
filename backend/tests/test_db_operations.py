@@ -8,10 +8,10 @@ Complements the existing files from Sameer:
 
 This file adds what those files do NOT cover:
   A. Foreign key constraint violations & ORM cascade behaviour
-  B. ENUM enforcement (xfail on SQLite — SQLAlchemy 2.0 maps Enum to VARCHAR
-     without CHECK constraints; DB-level enforcement requires MySQL native ENUMs)
-  C. CHECK constraint enforcement (schema.sq1 only — xfail gaps)
-  D. UNIQUE constraint enforcement (single-column + composite gap docs)
+  B. ENUM enforcement (models.py uses create_constraint=True, so SQLite
+     emits CHECK constraints that enforce valid enum values)
+  C. CHECK constraint enforcement (defined in models.py __table_args__)
+  D. UNIQUE constraint enforcement (single-column + composite)
   E. Index existence verification
   F. Concurrent access / race conditions (MySQL-only)
   G. Data integrity edge cases (NULLs, defaults, precision)
@@ -54,22 +54,10 @@ requires_mysql = pytest.mark.skipif(
     reason="Requires MySQL/MariaDB — set TEST_DB_URL env var",
 )
 
-schema_gap = pytest.mark.xfail(
-    reason=(
-        "models.py does not define this constraint; "
-        "only NoneCodeDeliverables/schema.sq1 (MySQL DDL) does"
-    ),
-    strict=False,
-)
 
-enum_no_check = pytest.mark.xfail(
-    reason=(
-        "SQLAlchemy 2.0 maps Enum to VARCHAR on SQLite without CHECK constraints. "
-        "DB-level ENUM enforcement requires MySQL native ENUMs or "
-        "create_constraint=True on each db.Enum() column in models.py"
-    ),
-    strict=False,
-)
+# NOTE: Previous xfail markers (schema_gap, enum_no_check) were removed.
+# models.py now defines all CHECK constraints and uses create_constraint=True
+# on all Enum columns, so these tests pass on SQLite without xfail.
 
 # ---------------------------------------------------------------------------
 # Fixtures

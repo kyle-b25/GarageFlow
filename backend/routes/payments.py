@@ -203,10 +203,18 @@ def payment_reports():
                         'message': 'start and end must be valid ISO 8601 datetimes'}), 400
 
     try:
-        payments = Payment.query.filter(
+        q = Payment.query.filter(
             Payment.payment_timestamp >= start_dt,
             Payment.payment_timestamp <= end_dt,
-        ).all()
+        )
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            from models import Ticket, ParkingSpot, Floor
+            q = (q.join(Ticket, Payment.ticket_id == Ticket.ticket_id)
+                   .join(ParkingSpot, Ticket.spot_id == ParkingSpot.spot_id)
+                   .join(Floor, ParkingSpot.floor_id == Floor.floor_id)
+                   .filter(Floor.garage_id == garage_id))
+        payments = q.all()
 
         total_revenue = Decimal('0.00')
         total_refunded = Decimal('0.00')

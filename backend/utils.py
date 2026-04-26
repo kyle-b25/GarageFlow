@@ -64,19 +64,69 @@ PRICING_PROGRAMS = {
 }
 
 
-def calculate_fee(duration_minutes):
-    """Calculate fee, consulting pricing_rule table if a rule exists.
+def _parse_applicable_hours(applicable_hours):
+    """Parse an applicable_hours string like '06:00-22:00' into (start_hour, end_hour).
 
-    Falls back to the default $5.00 base + $2.00/hour if no active rule
-    is found or the program is unresolvable.
+    Returns (0, 24) if the string is unparseable or covers all hours (e.g. '24/7').
+    Supports formats: 'HH:MM-HH:MM', '24/7', 'all'.
+    """
+    if not applicable_hours:
+        return 0, 24
+    cleaned = applicable_hours.strip().lower()
+    if cleaned in ('24/7', 'all', ''):
+        return 0, 24
+    try:
+        parts = cleaned.split('-')
+        if len(parts) != 2:
+            return 0, 24
+        start_h = int(parts[0].split(':')[0])
+        end_h = int(parts[1].split(':')[0])
+        return start_h, end_h
+    except (ValueError, IndexError):
+        return 0, 24
+
+
+def _rule_matches_now(rule, now=None):
+    """Check if a PricingRule's applicable_hours window covers the current hour."""
+    if now is None:
+        now = datetime.utcnow()
+    start_h, end_h = _parse_applicable_hours(rule.applicable_hours)
+    hour = now.hour
+    if start_h <= end_h:
+        return start_h <= hour < end_h
+    # Overnight window (e.g. 22:00-06:00)
+    return hour >= start_h or hour < end_h
+
+
+def calculate_fee(duration_minutes):
+    """Calculate fee, consulting pricing_rule table for a matching rule.
+
+    Rule selection strategy (deterministic):
+      1. Query all PricingRule rows.
+      2. Filter to rules whose applicable_hours window covers the current hour.
+      3. Among matches, prefer the rule with the lowest rate_id (oldest/highest priority).
+      4. If no rules match the current hour, fall back to the first rule overall.
+      5. If no rules exist or the DB is unreachable, use the hardcoded default.
+
+    Falls back to $5.00 base + $2.00/hour if no active rule is found.
     """
     try:
         from models import PricingRule
-        rule = PricingRule.query.first()
-        if rule and rule.program in PRICING_PROGRAMS:
-            return PRICING_PROGRAMS[rule.program](duration_minutes)
-    except Exception:
-        pass  # DB not available (e.g. during import) — use default
+        rules = PricingRule.query.order_by(PricingRule.rate_id).all()
+        if rules:
+            # Pick the first rule whose time window covers now
+            now = datetime.utcnow()
+            matched = next((r for r in rules if _rule_matches_now(r, now)), None)
+            rule = matched or rules[0]  # fall back to first rule if none match
+            if rule.program in PRICING_PROGRAMS:
+                return PRICING_PROGRAMS[rule.program](duration_minutes)
+            # Program name unrecognized — log and fall through to default
+            log_error('calculate_fee',
+                      f'PricingRule {rule.rate_id} has unknown program "{rule.program}"')
+    except Exception as exc:
+        # Log the failure so operators have visibility — do NOT silently swallow
+        log_error('calculate_fee',
+                  f'DB error during fee calculation, using fallback: {exc}')
     return Decimal('5.00') + Decimal('2.00') * math.ceil(duration_minutes / 60)
 
 
@@ -165,6 +215,15 @@ _SPOT_TYPE_TO_DRIVER_CLASSES = {}
 for _dc, _st in _DRIVER_CLASS_TO_SPOT_TYPE.items():
     _SPOT_TYPE_TO_DRIVER_CLASSES.setdefault(_st, set()).add(_dc)
 
+# Vehicle type → compatible spot types.  Motorcycles fit anywhere a car
+# fits; trucks are restricted to standard-sized spots only (no compact
+# accessibility or staff/eco spots which are typically smaller bays).
+_VEHICLE_TYPE_COMPATIBLE_SPOTS = {
+    'car':        {'standard', 'accessibility', 'staff', 'eco'},
+    'motorcycle': {'standard', 'accessibility', 'staff', 'eco'},
+    'truck':      {'standard'},
+}
+
 
 # ------------------------------------------------------------------
 #  Spot assignment exceptions
@@ -188,7 +247,7 @@ class ReservationConflictError(Exception):
     error_key = "reservation_conflict"
 
 
-def assign_spot(driver_class, arrival_datetime=None):
+def assign_spot(driver_class, arrival_datetime=None, vehicle_type=None, garage_id=None):
     """
     Find the best available (spot, floor) pair for the given driver class.
 
@@ -196,6 +255,15 @@ def assign_spot(driver_class, arrival_datetime=None):
     When arrival_datetime is provided, candidate spots are checked against
     confirmed reservations within a ±30-minute window; floors where all
     spots of the requested type conflict are skipped.
+
+    Args:
+        driver_class:     One of VALID_DRIVER_CLASSES.
+        arrival_datetime: Optional naive-UTC datetime for conflict checks.
+        vehicle_type:     Optional VehicleTypeEnum value string ('car',
+                          'motorcycle', 'truck').  When provided, only spots
+                          whose type is compatible with the vehicle size are
+                          considered.
+        garage_id:        Optional int — restrict search to a single garage.
 
     Returns (spot, floor) on success, or (None, None) if garage is full.
     """
@@ -206,8 +274,17 @@ def assign_spot(driver_class, arrival_datetime=None):
 
     spot_type_val = SpotTypeEnum(_DRIVER_CLASS_TO_SPOT_TYPE[driver_class])
 
-    floors = [f for f in Floor.query.filter(Floor.available_spots > 0).all()
-              if f.total_spots > 0]
+    # If vehicle_type is specified, verify the requested spot type is
+    # compatible with the vehicle.  If not, return early.
+    if vehicle_type:
+        compatible = _VEHICLE_TYPE_COMPATIBLE_SPOTS.get(vehicle_type)
+        if compatible and spot_type_val.value not in compatible:
+            return None, None
+
+    floor_q = Floor.query.filter(Floor.available_spots > 0)
+    if garage_id is not None:
+        floor_q = floor_q.filter(Floor.garage_id == garage_id)
+    floors = [f for f in floor_q.all() if f.total_spots > 0]
     if not floors:
         return None, None
 

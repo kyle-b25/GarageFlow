@@ -41,10 +41,20 @@ CORS(app, origins=_cors_origins or ['*'], supports_credentials=True)
 
 import models  # noqa: F401 — registers all models with SQLAlchemy metadata
 
+# Swagger UI at /docs
+from flasgger import Swagger
+from swagger_config import SWAGGER_TEMPLATE, SWAGGER_CONFIG
+Swagger(app, template=SWAGGER_TEMPLATE, config=SWAGGER_CONFIG)
+
 
 @app.route('/operator-front')
 def index():
     return render_template('index.html')
+
+
+@app.route('/customer-portal')
+def customer_portal():
+    return render_template('customer.html')
 
 
 @app.route('/health')
@@ -59,7 +69,7 @@ def health():
 from routes import (
     v1_bp, tickets_bp, token_auth_bp, analytics_bp,
     payments_bp, reservations_bp, spaces_bp, staff_bp, admin_bp,
-    gates_bp, pricing_bp,
+    gates_bp, pricing_bp, customer_bp,
 )
 
 app.register_blueprint(v1_bp)
@@ -73,6 +83,7 @@ app.register_blueprint(reservations_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(gates_bp)
 app.register_blueprint(pricing_bp)
+app.register_blueprint(customer_bp)
 
 
 # ------------------------------------------------------------------
@@ -139,10 +150,16 @@ def seed_admin(password):
 # ------------------------------------------------------------------
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from tasks import expire_stale_reservations
+from tasks import (
+    expire_stale_reservations, cleanup_stale_login_attempts,
+    reconcile_floor_counters, flag_stale_pending_payments,
+)
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(expire_stale_reservations, 'interval', minutes=10)
+scheduler.add_job(cleanup_stale_login_attempts, 'interval', minutes=10)
+scheduler.add_job(reconcile_floor_counters, 'interval', minutes=10)
+scheduler.add_job(flag_stale_pending_payments, 'interval', minutes=10)
 scheduler.start()
 
 

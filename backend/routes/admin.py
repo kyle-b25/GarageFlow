@@ -1,20 +1,23 @@
 """
 admin_bp.py — GarageFlow Admin Management API Blueprint
 
-Staff account CRUD and audit history endpoints.
+Staff account CRUD, audit history, and report export endpoints.
 
 Design decision — audit log:
   SystemEvent (with the new nullable staff_id FK) is used as the audit log.
   No dedicated model is needed: source + description + staff_id provide
   sufficient filtering (by user, action type, and date range).
 """
+import csv
+import io
 from datetime import datetime
+from decimal import Decimal
 
 import bcrypt
-from flask import Blueprint, jsonify, request, g
+from flask import Blueprint, jsonify, request, g, Response
 
 from app import db
-from models import Staff, StaffRoleEnum, SystemEvent
+from models import Staff, StaffRoleEnum, SystemEvent, SessionToken
 from utils import require_role, safe_int, log_error
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/v1')
@@ -167,8 +170,14 @@ def change_password(user_id):
         user.password_hash = bcrypt.hashpw(
             password.encode('utf-8'), bcrypt.gensalt()
         ).decode('utf-8')
+        # Revoke all active sessions for this user — matches /auth/change-password
+        # behavior. Atomic: both password update and token revocation commit together.
+        SessionToken.query.filter(
+            SessionToken.staff_id == user_id,
+            SessionToken.is_active == True,
+        ).update({'is_active': False})
         _audit('admin_bp.password_change',
-               f'Password changed for operator_id={user_id}',
+               f'Password changed for operator_id={user_id}; all sessions revoked',
                staff_id=user_id)
         db.session.commit()
         return jsonify({'message': 'password updated'}), 200
@@ -217,7 +226,16 @@ def change_status(user_id):
 @admin_bp.route('/admin/history', methods=['GET'])
 @require_role('admin')
 def get_history():
-    """Query the audit log with optional filters for userId, action, and date."""
+    """Query the audit log with optional filters and pagination.
+
+    Query params:
+      userId  — filter by staff ID
+      action  — substring match on source field
+      from    — ISO 8601 lower bound on created_at
+      to      — ISO 8601 upper bound on created_at
+      page    — 1-based page number (default 1)
+      limit   — results per page (default 50, max 200)
+    """
     try:
         q = SystemEvent.query
 
@@ -240,8 +258,175 @@ def get_history():
                 return jsonify({'error': 'invalid_date_format', 'message': 'from must be a valid ISO 8601 datetime'}), 400
             q = q.filter(SystemEvent.created_at >= dt)
 
-        events = q.order_by(SystemEvent.event_id.desc()).all()
-        return jsonify([_event_json(e) for e in events]), 200
+        to_date = request.args.get('to')
+        if to_date:
+            try:
+                dt = datetime.fromisoformat(to_date)
+            except ValueError:
+                return jsonify({'error': 'invalid_date_format', 'message': 'to must be a valid ISO 8601 datetime'}), 400
+            q = q.filter(SystemEvent.created_at <= dt)
+
+        # Pagination
+        page = max(int(request.args.get('page', 1)), 1)
+        limit = min(int(request.args.get('limit', 50)), 200)
+
+        total = q.count()
+        events = (q.order_by(SystemEvent.event_id.desc())
+                   .offset((page - 1) * limit)
+                   .limit(limit)
+                   .all())
+
+        return jsonify({
+            'events': [_event_json(e) for e in events],
+            'page': page,
+            'limit': limit,
+            'total': total,
+        }), 200
     except Exception as exc:
         log_error('admin.get_history', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to fetch history'}), 500
+
+
+# ── Shared report helpers ────────────────────────────────────────
+
+def _parse_report_range():
+    """Parse start/end query params for report endpoints."""
+    start_str = request.args.get('start')
+    end_str = request.args.get('end')
+    if not start_str or not end_str:
+        missing = 'start' if not start_str else 'end'
+        return None, None, (jsonify({'error': 'missing_required_field',
+                                     'message': f'{missing} query parameter is required'}), 400)
+    try:
+        start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00')).replace(tzinfo=None)
+        end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00')).replace(tzinfo=None)
+    except (ValueError, AttributeError):
+        return None, None, (jsonify({'error': 'invalid_parameter',
+                                     'message': 'start and end must be valid ISO 8601 datetimes'}), 400)
+    return start_dt, end_dt, None
+
+
+def _csv_response(output, filename):
+    """Wrap a StringIO CSV buffer in a Flask Response with download headers."""
+    return Response(
+        output.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+# ── GET /v1/admin/reports/revenue ────────────────────────────────
+
+@admin_bp.route('/admin/reports/revenue', methods=['GET'])
+@require_role('admin')
+def export_revenue():
+    """Export revenue data as CSV, filterable by date range and garage_id.
+
+    Query params:
+      start     (required)  ISO 8601
+      end       (required)  ISO 8601
+      garage_id (optional)  integer — restrict to a single garage
+    """
+    from models import Payment, PaymentStatusEnum, Ticket, ParkingSpot, Floor
+
+    start_dt, end_dt, err = _parse_report_range()
+    if err:
+        return err
+
+    try:
+        q = Payment.query.filter(
+            Payment.payment_timestamp >= start_dt,
+            Payment.payment_timestamp <= end_dt,
+        )
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = (q.join(Ticket, Payment.ticket_id == Ticket.ticket_id)
+                   .join(ParkingSpot, Ticket.spot_id == ParkingSpot.spot_id)
+                   .join(Floor, ParkingSpot.floor_id == Floor.floor_id)
+                   .filter(Floor.garage_id == garage_id))
+
+        payments = q.order_by(Payment.payment_timestamp).all()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['payment_id', 'ticket_id', 'amount_charged', 'payment_method',
+                         'payment_status', 'payment_timestamp'])
+        for p in payments:
+            writer.writerow([
+                p.payment_id,
+                p.ticket_id,
+                float(p.amount_charged),
+                p.payment_method.value,
+                p.payment_status.value,
+                p.payment_timestamp.isoformat() + 'Z',
+            ])
+
+        return _csv_response(output, f'revenue_{start_dt.date()}_{end_dt.date()}.csv')
+    except Exception as exc:
+        log_error('admin.export_revenue', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to export revenue'}), 500
+
+
+# ── GET /v1/admin/reports/utilization ────────────────────────────
+
+@admin_bp.route('/admin/reports/utilization', methods=['GET'])
+@require_role('admin')
+def export_utilization():
+    """Export utilization data as CSV, filterable by date range and garage_id.
+
+    Query params:
+      start     (required)  ISO 8601
+      end       (required)  ISO 8601
+      garage_id (optional)  integer — restrict to a single garage
+    """
+    from sqlalchemy import case, func
+    from models import OccupancyLog, OccupancyChangeEnum, ParkingSpot, Floor
+
+    start_dt, end_dt, err = _parse_report_range()
+    if err:
+        return err
+
+    try:
+        garage_id = request.args.get('garage_id', type=int)
+
+        # Total spots for denominator
+        total_q = db.session.query(func.count(ParkingSpot.spot_id))
+        if garage_id is not None:
+            total_q = total_q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        total_spots = total_q.scalar() or 0
+
+        # Daily bucketing
+        bucket_expr = func.strftime('%Y-%m-%d', OccupancyLog.changed_at)
+        q = db.session.query(
+            bucket_expr.label('day'),
+            func.sum(case(
+                (OccupancyLog.change_type == OccupancyChangeEnum.occupied, 1),
+                else_=0,
+            )).label('entries'),
+            func.sum(case(
+                (OccupancyLog.change_type == OccupancyChangeEnum.freed, 1),
+                else_=0,
+            )).label('exits'),
+        ).filter(
+            OccupancyLog.changed_at >= start_dt,
+            OccupancyLog.changed_at <= end_dt,
+        )
+        if garage_id is not None:
+            q = (q.join(ParkingSpot, OccupancyLog.spot_id == ParkingSpot.spot_id)
+                   .join(Floor, ParkingSpot.floor_id == Floor.floor_id)
+                   .filter(Floor.garage_id == garage_id))
+
+        rows = q.group_by('day').order_by('day').all()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['date', 'entries', 'exits', 'net_change', 'total_spots'])
+        for day, entries, exits in rows:
+            entries = entries or 0
+            exits = exits or 0
+            writer.writerow([day, entries, exits, entries - exits, total_spots])
+
+        return _csv_response(output, f'utilization_{start_dt.date()}_{end_dt.date()}.csv')
+    except Exception as exc:
+        log_error('admin.export_utilization', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to export utilization'}), 500

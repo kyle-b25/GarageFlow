@@ -17,7 +17,7 @@ from datetime import datetime
 import stripe
 from flask import Blueprint, request, jsonify
 
-from utils import log_error, calculate_duration, calculate_fee
+from utils import log_error, calculate_duration, calculate_fee, require_role
 
 v1_bp = Blueprint('v1', __name__, url_prefix='/v1')
 
@@ -64,12 +64,17 @@ def _count_spots(spots):
 
 @v1_bp.route('/capacity', methods=['GET'])
 def get_capacity():
-    """Return total, occupied, and available spot counts by type."""
+    """Return total, occupied, and available spot counts by type.
+    Optional query param: garage_id — restrict to a single garage."""
     from app import db
-    from models import ParkingSpot
+    from models import ParkingSpot, Floor
 
     try:
-        spots = ParkingSpot.query.all()
+        q = ParkingSpot.query
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        spots = q.all()
         total, occupied, available, by_type = _count_spots(spots)
 
         return jsonify({
@@ -90,12 +95,17 @@ def get_capacity():
 
 @v1_bp.route('/capacity/status', methods=['GET'])
 def get_capacity_status():
-    """Return available spot counts by type."""
+    """Return available spot counts by type.
+    Optional query param: garage_id — restrict to a single garage."""
     from app import db
-    from models import ParkingSpot, SpotTypeEnum, SpotStatusEnum
+    from models import ParkingSpot, SpotTypeEnum, SpotStatusEnum, Floor
 
     try:
-        spots = ParkingSpot.query.filter_by(status=SpotStatusEnum.available).all()
+        q = ParkingSpot.query.filter_by(status=SpotStatusEnum.available)
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        spots = q.all()
 
         counts = {st.value: 0 for st in SpotTypeEnum}
         for spot in spots:
@@ -152,17 +162,21 @@ def get_garage():
     from models import Garage
 
     try:
-        garage = Garage.query.first()
-        if not garage:
+        garages = Garage.query.all()
+        if not garages:
             return jsonify({'error': 'garage_not_found', 'message': 'No garage configured'}), 404
-        return jsonify({
-            'garageId':        garage.garage_id,
-            'name':            garage.name,
-            'totalCapacity':   garage.total_capacity,
-            'numberOfFloors':  garage.number_of_floors,
-            'operatingHours':  garage.operating_hours,
-            'frontDeskPhone':  garage.front_desk_phone,
-        }), 200
+        result = [{
+            'garageId':        g.garage_id,
+            'name':            g.name,
+            'totalCapacity':   g.total_capacity,
+            'numberOfFloors':  g.number_of_floors,
+            'operatingHours':  g.operating_hours,
+            'frontDeskPhone':  g.front_desk_phone,
+        } for g in garages]
+        # Backward compat: if only one garage, return object; otherwise array
+        if len(result) == 1:
+            return jsonify(result[0]), 200
+        return jsonify(result), 200
     except Exception as exc:
         db.session.rollback()
         log_error('routes.get_garage', str(exc))
@@ -178,12 +192,17 @@ _CONGESTION_THRESHOLD = float(os.getenv('CONGESTION_THRESHOLD', '0.85'))
 
 @v1_bp.route('/capacity/alert', methods=['GET'])
 def capacity_alert():
-    """Return congestion alert state based on configurable threshold."""
+    """Return congestion alert state based on configurable threshold.
+    Optional query param: garage_id — restrict to a single garage."""
     from app import db
-    from models import ParkingSpot
+    from models import ParkingSpot, Floor
 
     try:
-        spots = ParkingSpot.query.all()
+        q = ParkingSpot.query
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.join(Floor, ParkingSpot.floor_id == Floor.floor_id).filter(Floor.garage_id == garage_id)
+        spots = q.all()
         total, occupied, available, _ = _count_spots(spots)
         rate = occupied / total if total > 0 else 0
         alert = rate >= _CONGESTION_THRESHOLD
@@ -207,18 +226,11 @@ def capacity_alert():
 # ------------------------------------------------------------------
 
 @v1_bp.route('/garage', methods=['POST'])
+@require_role('admin')
 def create_garage():
     """Create a new garage. Replaces the interactive garage_builder workflow."""
     from app import db
     from models import Garage
-    from utils import require_role as _rr
-
-    # Inline auth check (can't use decorator on dual-method route)
-    from utils import get_current_user
-    from models import StaffRoleEnum
-    user = get_current_user()
-    if not user or user.role != StaffRoleEnum.admin:
-        return jsonify({'error': 'forbidden', 'message': 'Admin access required'}), 403
 
     data = request.get_json(silent=True) or {}
     name = data.get('name')
@@ -255,27 +267,95 @@ def create_garage():
 
 
 # ------------------------------------------------------------------
+#  PUT /v1/garage/<id> — Update garage configuration
+# ------------------------------------------------------------------
+
+@v1_bp.route('/garage/<int:garage_id>', methods=['PUT'])
+@require_role('admin')
+def update_garage(garage_id):
+    """Update an existing garage's configuration."""
+    from app import db
+    from models import Garage
+
+    try:
+        garage = Garage.query.get(garage_id)
+        if not garage:
+            return jsonify({'error': 'garage_not_found', 'message': 'No garage found with that ID'}), 404
+
+        data = request.get_json(silent=True) or {}
+        if 'name' in data:
+            garage.name = data['name']
+        if 'totalCapacity' in data:
+            garage.total_capacity = data['totalCapacity']
+        if 'numberOfFloors' in data:
+            garage.number_of_floors = data['numberOfFloors']
+        if 'operatingHours' in data:
+            garage.operating_hours = data['operatingHours']
+        if 'frontDeskPhone' in data:
+            garage.front_desk_phone = data['frontDeskPhone']
+
+        db.session.commit()
+        return jsonify({
+            'garageId': garage.garage_id,
+            'name': garage.name,
+            'totalCapacity': garage.total_capacity,
+            'numberOfFloors': garage.number_of_floors,
+            'operatingHours': garage.operating_hours,
+            'frontDeskPhone': garage.front_desk_phone,
+        }), 200
+    except Exception as exc:
+        db.session.rollback()
+        log_error('routes.update_garage', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to update garage'}), 500
+
+
+# ------------------------------------------------------------------
+#  DELETE /v1/garage/<id> — Delete garage configuration
+# ------------------------------------------------------------------
+
+@v1_bp.route('/garage/<int:garage_id>', methods=['DELETE'])
+@require_role('admin')
+def delete_garage(garage_id):
+    """Delete a garage. Cascades to floors, spots, gates."""
+    from app import db
+    from models import Garage
+
+    try:
+        garage = Garage.query.get(garage_id)
+        if not garage:
+            return jsonify({'error': 'garage_not_found', 'message': 'No garage found with that ID'}), 404
+
+        db.session.delete(garage)
+        db.session.commit()
+        return jsonify({'message': 'Garage deleted'}), 200
+    except Exception as exc:
+        db.session.rollback()
+        log_error('routes.delete_garage', str(exc))
+        return jsonify({'error': 'server_error', 'message': 'Failed to delete garage'}), 500
+
+
+# ------------------------------------------------------------------
 #  Stripe webhook helpers
 # ------------------------------------------------------------------
 
 def _is_duplicate_event(event_id):
-    """Check if a Stripe event has already been processed (exact match)."""
+    """Atomically record a Stripe event ID; return True if already processed.
+
+    Uses INSERT + IntegrityError on the unique event_id column instead of
+    check-then-insert, eliminating the TOCTOU race where two simultaneous
+    webhooks both pass a SELECT check.
+    """
     from app import db
-    from models import SystemEvent
+    from models import ProcessedWebhookEvent
+    from sqlalchemy.exc import IntegrityError
 
-    existing = SystemEvent.query.filter_by(
-        source='stripe_webhook',
-        description=event_id,
-    ).first()
-    if existing:
+    db.session.add(ProcessedWebhookEvent(event_id=event_id))
+    try:
+        db.session.flush()
+        return False
+    except IntegrityError:
+        db.session.rollback()
         return True
-
-    db.session.add(SystemEvent(
-        source='stripe_webhook',
-        description=event_id,
-    ))
-    # Do not commit here — let the handler's transaction include the dedup record
-    return False
 
 
 def _find_payment_by_intent(intent_id):

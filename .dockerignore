@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.github/
+.claude/
+coverage_html/
+.coverage
+*.db
+instance/
+backend/instance/
+NoneCodeDeliverables/
+BigStrongTools/
+docs/
+db/

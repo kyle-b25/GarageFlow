@@ -77,6 +77,7 @@ def post_ticket():
     license_plate = data.get('licensePlate')
     driver_class  = data.get('driverClass')
     phone         = data.get('phone')
+    garage_id     = data.get('garageId')
 
     # Validate input
     if not license_plate or not driver_class:
@@ -112,8 +113,12 @@ def post_ticket():
         if Ticket.query.filter_by(vehicle_id=vehicle.vehicle_id, status=TicketStatusEnum.active).first():
             return jsonify({'error': 'duplicate_plate', 'message': 'Vehicle already has an active ticket'}), 409
 
-        # Assign spot (prefers lowest floor number)
-        spot, floor = assign_spot(driver_class)
+        # Assign spot (prefers lowest floor number, filtered by vehicle type)
+        spot, floor = assign_spot(
+            driver_class,
+            vehicle_type=vehicle.vehicle_type.value,
+            garage_id=garage_id,
+        )
         if not spot:
             return jsonify({'error': 'garage_full', 'message': 'No available spots for this driver class'}), 503
 
@@ -172,6 +177,7 @@ def get_tickets():
     status_param = request.args.get('status')
     plate_param  = request.args.get('plate') or request.args.get('licensePlate')
     phone_param  = request.args.get('phone')
+    garage_id    = request.args.get('garage_id', type=int)
 
     q = Ticket.query
 
@@ -196,6 +202,12 @@ def get_tickets():
 
         if phone_param:
             q = q.filter_by(phone=phone_param)
+
+        if garage_id is not None:
+            from models import ParkingSpot, Floor
+            q = (q.join(ParkingSpot, Ticket.spot_id == ParkingSpot.spot_id)
+                   .join(Floor, ParkingSpot.floor_id == Floor.floor_id)
+                   .filter(Floor.garage_id == garage_id))
 
         tickets = q.order_by(Ticket.entry_timestamp.desc()).all()
         return jsonify([_ticket_json(t) for t in tickets]), 200
@@ -304,6 +316,14 @@ def put_ticket_exit(ticket_id):
         db.session.rollback()
         log_error('tickets.put_ticket_exit', str(exc))
         return jsonify({'error': 'server_error', 'message': 'Failed to process exit'}), 500
+
+    # Send payment receipt notification (best-effort)
+    try:
+        from notifications import notify_payment_receipt
+        if ticket.payment:
+            notify_payment_receipt(ticket, ticket.payment)
+    except Exception:
+        pass
 
     return jsonify({
         'ticketId':      ticket.ticket_id,

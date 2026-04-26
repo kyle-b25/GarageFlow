@@ -363,14 +363,56 @@ class TestReservationScheduling:
         })
         assert resp.status_code == 400
 
-    @pytest.mark.skip(
-        reason="Reservations are advisory (floor-level, no spot locking). "
-               "Double-booking rejection lives in services/occupancy.py "
-               "(tested in TestOccupancyService.test_occupancy_reservation_conflict_error). "
-               "Remove skip once POST /v1/reservations integrates validate_and_assign_spot."
-    )
     def test_reservation_double_booking(self, app_ctx):
-        pass
+        """Verify advisory double-booking prevention via ±30-min conflict window.
+
+        The system uses an advisory model: reservations don't lock specific spots
+        but assign_spot() counts confirmed reservations in the ±30-min window
+        per floor. When all spots of a type are covered by reservations in that
+        window, new reservations for the same time should be rejected (503).
+
+        Setup: 2 floors x 2 standard spots = 4 standard total.
+        Book 4 reservations at the same time → all standard slots conflict.
+        5th reservation at the same time → should fail.
+        Reservation at a different time (outside ±30 min) → should succeed.
+        """
+        client, ctx = app_ctx
+        arrival = _future_iso(minutes=120)  # well in the future
+
+        # Fill all 4 standard spots with reservations at the same arrival time
+        for i in range(4):
+            resp = client.post('/v1/reservations', json={
+                'phone': f'555-DB-{i:04d}',
+                'scheduledArrival': arrival,
+                'licensePlate': f'DBL-{i:04d}',
+                'driverClass': 'standard',
+            })
+            assert resp.status_code == 201, (
+                f'Reservation {i} failed unexpectedly: {resp.get_json()}'
+            )
+
+        # 5th reservation at same time → conflict (all standard spots taken)
+        resp = client.post('/v1/reservations', json={
+            'phone': '555-DB-9999',
+            'scheduledArrival': arrival,
+            'licensePlate': 'DBL-9999',
+            'driverClass': 'standard',
+        })
+        assert resp.status_code in (409, 503), (
+            f'Expected conflict but got {resp.status_code}: {resp.get_json()}'
+        )
+
+        # Reservation at a different time (well outside ±30 min) → should succeed
+        different_time = _future_iso(minutes=300)
+        resp = client.post('/v1/reservations', json={
+            'phone': '555-DB-LATE',
+            'scheduledArrival': different_time,
+            'licensePlate': 'DBL-LATE',
+            'driverClass': 'standard',
+        })
+        assert resp.status_code == 201, (
+            f'Different-time reservation should succeed: {resp.get_json()}'
+        )
 
     def test_reservation_cancel(self, app_ctx):
         client, ctx = app_ctx

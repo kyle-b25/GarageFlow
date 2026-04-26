@@ -30,11 +30,16 @@ def _gate_json(gate):
 
 @gates_bp.route('', methods=['GET'])
 def list_gates():
+    """List all gates. Optional query param: garage_id."""
     from app import db
     from models import GateEvent
 
     try:
-        gates = GateEvent.query.all()
+        q = GateEvent.query
+        garage_id = request.args.get('garage_id', type=int)
+        if garage_id is not None:
+            q = q.filter(GateEvent.garage_id == garage_id)
+        gates = q.all()
         return jsonify([_gate_json(g) for g in gates]), 200
     except Exception as exc:
         db.session.rollback()
