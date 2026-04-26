@@ -39,8 +39,6 @@ import {
   updateFloorAPI,
   deleteFloorAPI,
   getFloorSpaces,
-  createSpaceAPI,
-  deleteSpaceAPI,
   setAuthState,
   getStoredToken,
   clearAuthState,
@@ -622,12 +620,15 @@ function showDashLoggedIn(user) {
 }
 
 function showDashLoggedOut() {
+  if (!dashToken && !dashUser) return; // guard re-entry from clearAuthState callback
   dashToken = null;
   dashUser = null;
   clearAuthState();
   document.getElementById('dash-login').style.display = '';
   document.getElementById('dash-content').style.display = 'none';
   document.getElementById('dash-user-info').style.display = 'none';
+  document.getElementById('dash-user').value = '';
+  document.getElementById('dash-pass').value = '';
 }
 
 async function dashLogin() {
@@ -939,7 +940,8 @@ let _currentGarage = null;
 async function loadGarageConfig() {
   const currentSection = document.getElementById('cfg-current');
   try {
-    const g = await getGarage();
+    const data = await getGarage();
+    const g = Array.isArray(data) ? data[0] : data;
     if (!g) { currentSection.style.display = 'none'; _currentGarage = null; return; }
     _currentGarage = g;
     currentSection.style.display = 'block';
@@ -964,9 +966,8 @@ function startEditGarage() {
   _editingGarageId = _currentGarage.garageId;
 
   document.getElementById('cfg-name').value = _currentGarage.name || '';
-  document.getElementById('cfg-capacity').value = _currentGarage.totalCapacity || '';
-  document.getElementById('cfg-floors').value = _currentGarage.numberOfFloors || '';
   document.getElementById('cfg-hours').value = _currentGarage.operatingHours || '';
+  document.getElementById('cfg-phone').value = _currentGarage.frontDeskPhone || '';
 
   document.getElementById('cfg-form-title').textContent = 'Edit Garage';
   document.getElementById('btn-cfg-create').textContent = 'Save Changes';
@@ -981,9 +982,8 @@ function cancelEditGarage() {
   document.getElementById('btn-cfg-create').dataset.label = 'Create Garage';
   document.getElementById('btn-cfg-cancel-edit').style.display = 'none';
   document.getElementById('cfg-name').value = '';
-  document.getElementById('cfg-capacity').value = '';
-  document.getElementById('cfg-floors').value = '';
   document.getElementById('cfg-hours').value = '';
+  document.getElementById('cfg-phone').value = '';
 }
 
 async function handleDeleteGarage() {
@@ -1006,11 +1006,10 @@ async function handleDeleteGarage() {
 
 async function handleCreateGarage() {
   const name = document.getElementById('cfg-name').value.trim();
-  const capacity = parseInt(document.getElementById('cfg-capacity').value, 10);
-  const floors = parseInt(document.getElementById('cfg-floors').value, 10);
   const hours = document.getElementById('cfg-hours').value.trim();
+  const phone = document.getElementById('cfg-phone').value.trim();
 
-  if (!name || !capacity || !floors || !hours) { alert('All fields are required.'); return; }
+  if (!name || !hours) { alert('Garage name and operating hours are required.'); return; }
   if (!isValidHours(hours)) { alert('Invalid hours format. Use HH:MM-HH:MM or 24/7.'); return; }
 
   const btn = document.getElementById('btn-cfg-create');
@@ -1018,20 +1017,22 @@ async function handleCreateGarage() {
   const result = document.getElementById('cfg-result');
   result.style.display = 'none';
   try {
-    const payload = { name, totalCapacity: capacity, numberOfFloors: floors, operatingHours: hours };
+    const payload = { name, operatingHours: hours, frontDeskPhone: phone || null };
     let g;
     if (_editingGarageId) {
       g = await updateGarageAPI(_editingGarageId, payload);
       showFeedback(result, `Garage "${g.name}" updated.`, false);
       cancelEditGarage();
     } else {
+      // Placeholder values — _sync_garage() recalculates once floors are added
+      payload.totalCapacity = 1;
+      payload.numberOfFloors = 1;
       g = await createGarageAPI(payload);
-      showFeedback(result, `Garage "${g.name}" created (ID: ${g.garageId}).`, false);
+      showFeedback(result, `Garage "${g.name}" created. Add floors below.`, false);
     }
     document.getElementById('cfg-name').value = '';
-    document.getElementById('cfg-capacity').value = '';
-    document.getElementById('cfg-floors').value = '';
     document.getElementById('cfg-hours').value = '';
+    document.getElementById('cfg-phone').value = '';
     loadGarageConfig();
     loadGarageName();
   } catch (err) {
@@ -1075,11 +1076,6 @@ async function loadFloorConfig(garageId) {
       SPOT_TYPES.forEach(t => { typeCounts[t] = 0; });
       spots.forEach(s => { if (typeCounts[s.spotType] !== undefined) typeCounts[s.spotType]++; });
 
-      const typeBreakdown = SPOT_TYPES
-        .filter(t => typeCounts[t] > 0)
-        .map(t => `${typeCounts[t]} ${t}`)
-        .join(', ') || 'no spots';
-
       const hasOccupied = occupied > 0;
 
       container.innerHTML += `
@@ -1097,28 +1093,6 @@ async function loadFloorConfig(garageId) {
           </div>
           <div class="zone-row"><span class="zone-key">Floor #</span><span class="zone-val">${f.floorNumber}</span></div>
           <div class="zone-row"><span class="zone-key">Spots</span><span class="zone-val">${occupied} / ${f.totalSpots} occupied (${pct}%)</span></div>
-          <div class="zone-row"><span class="zone-key">Types</span><span class="zone-val">${typeBreakdown}</span></div>
-          <div style="margin-top:8px; display:flex; gap:4px; align-items:center;">
-            <button class="btn btn-secondary btn-sm" data-action="toggle-spots" data-floor-id="${f.floorId}">Manage Spots</button>
-          </div>
-          <div class="floor-spots-detail" id="floor-spots-${f.floorId}" style="display:none; margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
-            <div style="display:flex; gap:4px; margin-bottom:8px; align-items:center;">
-              <select data-action="spot-type-select" data-floor-id="${f.floorId}" style="padding:4px 8px; border-radius:var(--radius); border:1px solid var(--border); font-size:12px;">
-                ${SPOT_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}
-              </select>
-              <button class="btn btn-primary btn-sm" data-action="add-spot" data-floor-id="${f.floorId}">Add Spot</button>
-            </div>
-            <div class="floor-spots-list" data-floor-id="${f.floorId}">
-              ${spots.length ? spots.map(s => `
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; border-bottom:1px solid var(--border); font-size:12px;">
-                  <span>${escapeHtml(s.locationReference || 'Spot ' + s.spotId)} — <em>${s.spotType}</em> — ${s.status}</span>
-                  <button class="btn btn-secondary btn-sm btn-danger-text" data-action="delete-spot"
-                          data-floor-id="${f.floorId}" data-spot-id="${s.spotId}"
-                          ${s.status === 'occupied' ? 'disabled title="Occupied"' : ''}
-                          style="padding:1px 6px; font-size:11px;">×</button>
-                </div>`).join('') : '<div style="color:var(--muted); font-size:12px;">No spots. Add one above.</div>'}
-            </div>
-          </div>
         </div>`;
     });
   } catch (err) {
@@ -1184,7 +1158,6 @@ async function handleAddFloor() {
       showFeedback(result, `Floor ${number} added.`, false);
       _clearFloorForm();
     }
-    await loadFloorConfig(_currentGarage.garageId);
     await loadGarageConfig();
   } catch (err) {
     showFeedback(result, `Failed: ${err.message}`, true);
@@ -1217,33 +1190,7 @@ async function handleDeleteFloor(floorId) {
   try {
     await deleteFloorAPI(floorId);
     showFeedback(result, 'Floor deleted.', false);
-    await loadFloorConfig(_currentGarage.garageId);
     await loadGarageConfig();
-  } catch (err) {
-    showFeedback(result, `Delete failed: ${err.message}`, true);
-  }
-}
-
-async function handleAddSpot(floorId) {
-  const select = document.querySelector(`select[data-action="spot-type-select"][data-floor-id="${floorId}"]`);
-  const spotType = select ? select.value : 'standard';
-  const result = document.getElementById('cfg-floor-result');
-  try {
-    await createSpaceAPI(floorId, { type: spotType });
-    showFeedback(result, `${spotType} spot added.`, false);
-    await loadFloorConfig(_currentGarage.garageId);
-  } catch (err) {
-    showFeedback(result, `Add spot failed: ${err.message}`, true);
-  }
-}
-
-async function handleDeleteSpot(floorId, spotId) {
-  if (!confirm('Delete this spot?')) return;
-  const result = document.getElementById('cfg-floor-result');
-  try {
-    await deleteSpaceAPI(floorId, spotId);
-    showFeedback(result, 'Spot deleted.', false);
-    await loadFloorConfig(_currentGarage.garageId);
   } catch (err) {
     showFeedback(result, `Delete failed: ${err.message}`, true);
   }
@@ -1267,13 +1214,6 @@ function setupFloorConfigListeners() {
       startEditFloor(floorId, btn.dataset.floorName, parseInt(btn.dataset.floorNumber), typeCounts);
     } else if (action === 'delete-floor') {
       handleDeleteFloor(floorId);
-    } else if (action === 'toggle-spots') {
-      const detail = document.getElementById(`floor-spots-${floorId}`);
-      if (detail) detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
-    } else if (action === 'add-spot') {
-      handleAddSpot(floorId);
-    } else if (action === 'delete-spot') {
-      handleDeleteSpot(floorId, btn.dataset.spotId);
     }
   });
 }

@@ -408,15 +408,5 @@ export async function deleteFloorAPI(floorId) {
 
 /** GET /v1/floors/{id}/spaces — list spots on a floor. */
 export async function getFloorSpaces(floorId) {
-  return apiFetch(`/v1/floors/${floorId}/spaces`);
-}
-
-/** POST /v1/floors/{id}/spaces — create a spot on a floor (admin). */
-export async function createSpaceAPI(floorId, data) {
-  return _authRetry('POST', `/v1/floors/${floorId}/spaces`, data);
-}
-
-/** DELETE /v1/floors/{id}/spaces/{spotId} — delete a spot (admin). */
-export async function deleteSpaceAPI(floorId, spotId) {
-  return _authRetry('DELETE', `/v1/floors/${floorId}/spaces/${spotId}`);
+  return _request('GET', `/v1/floors/${floorId}/spaces`);
 }

@@ -276,6 +276,7 @@ def update_garage(garage_id):
     """Update an existing garage's configuration."""
     from app import db
     from models import Garage
+    from utils import _sync_garage
 
     try:
         garage = Garage.query.get(garage_id)
@@ -285,15 +286,13 @@ def update_garage(garage_id):
         data = request.get_json(silent=True) or {}
         if 'name' in data:
             garage.name = data['name']
-        if 'totalCapacity' in data:
-            garage.total_capacity = data['totalCapacity']
-        if 'numberOfFloors' in data:
-            garage.number_of_floors = data['numberOfFloors']
         if 'operatingHours' in data:
             garage.operating_hours = data['operatingHours']
         if 'frontDeskPhone' in data:
             garage.front_desk_phone = data['frontDeskPhone']
 
+        # Recalculate capacity/floors from actual floor records
+        _sync_garage(garage)
         db.session.commit()
         return jsonify({
             'garageId': garage.garage_id,
