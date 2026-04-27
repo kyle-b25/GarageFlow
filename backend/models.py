@@ -95,10 +95,7 @@ class OccupancyChangeEnum(enum.Enum):
     occupied = "occupied"
     freed    = "freed"
 
-class PricingModelEnum(enum.Enum):
-    flat    = "flat"
-    hourly  = "hourly"
-    special = "special"
+# PricingModelEnum removed — pricing is now pure $/hr per rule and garage base rate.
 
 
 # =============================================================
@@ -124,6 +121,7 @@ class Garage(db.Model):
     number_of_floors  = db.Column(db.Integer, nullable=False)
     operating_hours   = db.Column(db.String(100), nullable=False)  # Fixed: String(50)->String(100), nullable=False per schema.sq1/Task5  # WARNING: tests/test_all.py app_ctx fixture and tests/test_db_operations.py seeded_db fixture create Garage without operating_hours
     front_desk_phone  = db.Column(db.String(25))                   # Fixed: String(20)->String(25) per schema.sq1
+    base_rate_per_hour = db.Column(db.Numeric(10, 2), nullable=False, server_default='2.00')  # 24/7 fallback rate
 
     # Relationships
     floors      = db.relationship("Floor",     back_populates="garage", cascade="all, delete-orphan")
@@ -464,19 +462,31 @@ class SystemEvent(db.Model):
 
 class PricingRule(db.Model):
     """
-    Defines how parking fees are calculated.
-    The `program` field stores the name of the Python callable
-    (resolvable at runtime) that accepts entry and exit timestamps
-    and returns a Decimal fee.
+    Defines a time-window pricing override.
+
+    The garage always has a base_rate_per_hour (see Garage model) that applies
+    at every hour with no matching rule.  PricingRule rows add named windows
+    (e.g. "10:00-15:00") with their own $/hr rate.
+
+    When calculating a fee, every clock-hour of the session is matched against
+    all rules ordered by rate_id ascending; the first matching rule wins for
+    that hour.  If no rule matches, the garage base rate is used.
+
+    This lets operators stack surge rules:
+      - Rate A  10:00-15:00  $9/hr   (rate_id 1)
+      - Rate B  11:00-13:00  $10/hr  (rate_id 2)
+    At 11:30, rule A fires first (lower rate_id), so Rate B only takes effect
+    if rule A did not already cover that window *or* rule A is deleted.
+    Operators control priority by creation order.
     """
     __tablename__ = "pricing_rule"
 
     rate_id          = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    rate_name        = db.Column(db.String(100),  nullable=False, unique=True)   # Fixed: String(50)->String(100) per schema.sq1
-    applicable_hours = db.Column(db.String(100),  nullable=False)  # Fixed: String(50)->String(100), nullable=True->False per schema.sq1/Task5
-    pricing_model    = db.Column(db.Enum(PricingModelEnum, create_constraint=True, name='ck_pricing_model'), nullable=False)  # Fixed: added create_constraint + name
-    description      = db.Column(db.Text, nullable=False)  # Fixed: nullable=True->False per schema.sq1/Task5
-    program          = db.Column(db.String(255), nullable=False)   # Fixed: String(100)->String(255), nullable=True->False per schema.sq1/Task5
+    rate_name        = db.Column(db.String(100), nullable=False, unique=True)
+    applicable_hours = db.Column(db.String(100), nullable=False)   # e.g. "10:00-15:00" or "22:00-06:00"
+    rate_per_hour    = db.Column(db.Numeric(10, 2), nullable=False) # $/hr for this window
+    description      = db.Column(db.Text, nullable=False)
+    sort_order       = db.Column(db.Integer, nullable=False, default=0)  # user-controlled priority; lower = checked first
 
 
 # =============================================================

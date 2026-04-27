@@ -6,7 +6,6 @@ Consolidates duplicated logic from app.py, routes/_routes.py, and routes/payment
 
 import math
 import sys
-from decimal import Decimal
 from functools import wraps
 
 from datetime import datetime
@@ -37,33 +36,6 @@ def calculate_duration(entry_ts, exit_ts):
     return math.ceil((exit_ts - entry_ts).total_seconds() / 60)
 
 
-def _fee_flat(duration_minutes, **params):
-    """Flat fee regardless of duration."""
-    return Decimal(str(params.get('rate', '10.00')))
-
-
-def _fee_hourly(duration_minutes, **params):
-    """Base + per-hour (ceiling)."""
-    base = Decimal(str(params.get('base', '5.00')))
-    per_hour = Decimal(str(params.get('per_hour', '2.00')))
-    return base + per_hour * math.ceil(duration_minutes / 60)
-
-
-def _fee_special(duration_minutes, **params):
-    """Discounted rate — half the hourly rate."""
-    base = Decimal(str(params.get('base', '3.00')))
-    per_hour = Decimal(str(params.get('per_hour', '1.00')))
-    return base + per_hour * math.ceil(duration_minutes / 60)
-
-
-# Registry of named pricing callables — maps program field to function
-PRICING_PROGRAMS = {
-    'flat': _fee_flat,
-    'hourly': _fee_hourly,
-    'special': _fee_special,
-}
-
-
 def _parse_applicable_hours(applicable_hours):
     """Parse an applicable_hours string like '06:00-22:00' into (start_hour, end_hour).
 
@@ -86,48 +58,96 @@ def _parse_applicable_hours(applicable_hours):
         return 0, 24
 
 
-def _rule_matches_now(rule, now=None):
-    """Check if a PricingRule's applicable_hours window covers the current hour."""
-    if now is None:
-        now = datetime.utcnow()
-    start_h, end_h = _parse_applicable_hours(rule.applicable_hours)
-    hour = now.hour
-    if start_h <= end_h:
-        return start_h <= hour < end_h
-    # Overnight window (e.g. 22:00-06:00)
-    return hour >= start_h or hour < end_h
+def calculate_fee(entry_ts, exit_ts):
+    """Calculate parking fee using tiered, time-window-based pricing (Option B: prorated).
 
+    Algorithm — for every clock-hour segment of the session:
+      1. Find the first PricingRule (ordered by rate_id, lowest = highest priority)
+         whose applicable_hours window covers that clock hour.
+      2. If no rule matches, use the garage's base_rate_per_hour.
+      3. Multiply the winning rate by the exact fractional hours in that segment.
+      4. Sum all segments and round up to the nearest cent.
 
-def calculate_fee(duration_minutes):
-    """Calculate fee, consulting pricing_rule table for a matching rule.
+    This means a vehicle parked 10:30–13:00 with rules:
+      • base $2/hr, rule A 10:00-15:00 $9/hr (rate_id=1), rule B 11:00-13:00 $10/hr (rate_id=2)
+    pays: 0.5 h × $9 (10:30-11:00) + 1 h × $9 (11:00-12:00) + 1 h × $9 (12:00-13:00) = $22.50
+    Rule B never fires because rule A (lower rate_id) is checked first.
 
-    Rule selection strategy (deterministic):
-      1. Query all PricingRule rows.
-      2. Filter to rules whose applicable_hours window covers the current hour.
-      3. Among matches, prefer the rule with the lowest rate_id (oldest/highest priority).
-      4. If no rules match the current hour, fall back to the first rule overall.
-      5. If no rules exist or the DB is unreachable, use the hardcoded default.
-
-    Falls back to $5.00 base + $2.00/hour if no active rule is found.
+    Falls back to $2.00/hr if the DB is unreachable.
     """
+    from datetime import timedelta
+    from decimal import Decimal, ROUND_UP
+
+    _FALLBACK_RATE = Decimal('2.00')
+
     try:
-        from models import PricingRule
-        rules = PricingRule.query.order_by(PricingRule.rate_id).all()
-        if rules:
-            # Pick the first rule whose time window covers now
-            now = datetime.utcnow()
-            matched = next((r for r in rules if _rule_matches_now(r, now)), None)
-            rule = matched or rules[0]  # fall back to first rule if none match
-            if rule.program in PRICING_PROGRAMS:
-                return PRICING_PROGRAMS[rule.program](duration_minutes)
-            # Program name unrecognized — log and fall through to default
-            log_error('calculate_fee',
-                      f'PricingRule {rule.rate_id} has unknown program "{rule.program}"')
+        from models import PricingRule, Garage
+        garage = Garage.query.first()
+        base_rate = (
+            Decimal(str(garage.base_rate_per_hour))
+            if garage and garage.base_rate_per_hour is not None
+            else _FALLBACK_RATE
+        )
+        # Lower sort_order = higher priority (user-controlled via move up/down)
+        rules = PricingRule.query.order_by(PricingRule.sort_order, PricingRule.rate_id).all()
     except Exception as exc:
-        # Log the failure so operators have visibility — do NOT silently swallow
-        log_error('calculate_fee',
-                  f'DB error during fee calculation, using fallback: {exc}')
-    return Decimal('5.00') + Decimal('2.00') * math.ceil(duration_minutes / 60)
+        log_error('calculate_fee', f'DB error, using fallback rate: {exc}')
+        seconds = (exit_ts - entry_ts).total_seconds()
+        return (_FALLBACK_RATE * Decimal(str(seconds / 3600))).quantize(
+            Decimal('0.01'), rounding=ROUND_UP
+        )
+
+    # Resolve Eastern timezone for rule-window matching.
+    # entry_ts / exit_ts are naive UTC; convert each segment cursor to
+    # America/New_York (handles EST/EDT automatically) before checking hours.
+    _eastern = None
+    try:
+        from zoneinfo import ZoneInfo
+        _eastern = ZoneInfo('America/New_York')
+    except ImportError:
+        try:
+            import pytz
+            _eastern = pytz.timezone('America/New_York')
+        except ImportError:
+            pass  # last resort: fall through and use UTC hour
+
+    from datetime import timezone as _utc_tz
+
+    total = Decimal('0.00')
+    cursor = entry_ts
+
+    while cursor < exit_ts:
+        # Advance cursor to the top of the next clock hour
+        next_boundary = (
+            cursor.replace(minute=0, second=0, microsecond=0)
+            + timedelta(hours=1)
+        )
+        segment_end = min(next_boundary, exit_ts)
+        fraction = Decimal(str((segment_end - cursor).total_seconds())) / Decimal('3600')
+
+        # Determine Eastern local hour for this segment
+        if _eastern:
+            h = cursor.replace(tzinfo=_utc_tz.utc).astimezone(_eastern).hour
+        else:
+            h = cursor.hour  # UTC fallback if no tz library is available
+
+        # First rule whose window covers this local hour wins
+        rate = base_rate
+        for rule in rules:
+            s, e = _parse_applicable_hours(rule.applicable_hours)
+            # Normal window (e.g. 10-15): s <= h < e
+            # Overnight window (e.g. 22-06): h >= s OR h < e
+            in_window = (s <= h < e) if s <= e else (h >= s or h < e)
+            if in_window:
+                rate = Decimal(str(rule.rate_per_hour))
+                break
+
+        total += rate * fraction
+        cursor = segment_end
+
+    fee = total.quantize(Decimal('0.01'), rounding=ROUND_UP)
+    # Enforce minimum charge — never less than one unit of the base rate
+    return max(fee, base_rate.quantize(Decimal('0.01')))
 
 
 def get_current_user():

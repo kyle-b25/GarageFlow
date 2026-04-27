@@ -306,7 +306,7 @@ def put_ticket_exit(ticket_id):
     exit_ts = datetime.utcnow()
     ticket.exit_timestamp = exit_ts
     ticket.duration = calculate_duration(ticket.entry_timestamp, exit_ts)
-    ticket.total_fee = calculate_fee(ticket.duration)
+    ticket.total_fee = calculate_fee(ticket.entry_timestamp, exit_ts)
     ticket.status = TicketStatusEnum.closed
 
     # Step 6 — Create Payment
@@ -469,7 +469,7 @@ def override_ticket(ticket_id):
             exit_ts = datetime.utcnow()
             ticket.exit_timestamp = exit_ts
             ticket.duration = calculate_duration(ticket.entry_timestamp, exit_ts)
-            ticket.total_fee = calculate_fee(ticket.duration)
+            ticket.total_fee = calculate_fee(ticket.entry_timestamp, exit_ts)
             ticket.status = TicketStatusEnum.closed
             release_spot(ticket.spot_id, exit_ts)
 

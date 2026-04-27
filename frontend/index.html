@@ -406,7 +406,7 @@
 
   <div class="header">
     <div class="logo-icon">&#127970;</div>
-    <div style="display:flex; align-items:baseline; gap:16px;">
+    <div style="display:flex; align-items:baseline; gap:16px; flex:1;">
       <div class="brand-name">GarageFlow   </div>
       <div id="garage-name" style="
         font-family: 'Bebas Neue', sans-serif;
@@ -419,6 +419,16 @@
         line-height: 1;
       ">&mdash;</div>
     </div>
+    <div id="kiosk-clock" style="
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(16px, 2.2vw, 30px);
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      white-space: nowrap;
+      line-height: 1;
+      margin-left: auto;
+      flex-shrink: 0;
+    "></div>
   </div>
 
   <div id="congestion-banner" class="congestion-banner"></div>
@@ -670,6 +680,7 @@
           <button class="tab-btn" data-tab="tab-overrides">Overrides</button>
           <button class="tab-btn" data-tab="tab-audit">Audit Log</button>
           <button class="tab-btn" data-tab="tab-config">Config</button>
+          <button class="tab-btn" data-tab="tab-pricing">Pricing</button>
         </div>
 
         <!-- ── Tab: Analytics ── -->
@@ -846,6 +857,108 @@
           </div>
           <div id="cfg-result" style="display:none; margin-top:14px; padding:12px; border-radius:var(--radius); font-size:13px;"></div>
         </div>
+
+
+        <!-- ── Tab: Pricing ── -->
+        <div id="tab-pricing" class="tab-content">
+
+          <!-- ── Top status bar ── -->
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:16px;">
+            <div class="zone-card">
+              <div class="zone-card-title">Base Rate</div>
+              <div id="pr-base-display" style="font-size:22px; font-weight:600; color:var(--accent);">&mdash;</div>
+              <div style="font-size:11px; color:var(--text-dim); margin-top:4px;">24/7 fallback</div>
+            </div>
+            <div class="zone-card">
+              <div class="zone-card-title">Effective Rate Now</div>
+              <div id="pr-effective-rate" style="font-size:20px; font-weight:600;">&mdash;</div>
+            </div>
+            <div class="zone-card">
+              <div class="zone-card-title">Custom Rules</div>
+              <div id="pricing-rule-count" style="font-size:22px; font-weight:600;">&mdash;</div>
+            </div>
+          </div>
+
+          <!-- ── Schedule preview ── -->
+          <div style="background:var(--input-bg); border:1px solid var(--border); border-radius:8px; padding:14px; margin-bottom:16px;">
+            <div class="sub-title" style="margin-bottom:10px;">Rate Schedule (priority order)</div>
+            <div id="pr-schedule-preview" style="font-size:13px; color:var(--text-muted);">Loading&hellip;</div>
+          </div>
+
+          <!-- ── Base rate editor ── -->
+          <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px;">
+            <div class="sub-title">Base Rate (24/7 Fallback)</div>
+            <p style="font-size:13px; color:var(--text-muted); margin-bottom:12px;">
+              This rate applies to every hour that is <strong>not</strong> covered by a custom rule.
+              It is always the last line of defense in the rate schedule.
+            </p>
+            <div style="display:grid; grid-template-columns:1fr auto; gap:8px; align-items:end; max-width:380px;">
+              <div class="field" style="margin-bottom:0;">
+                <label for="pr-base-input">Rate ($/hr)</label>
+                <input type="number" id="pr-base-input" min="0" step="0.01" placeholder="e.g. 2.00">
+              </div>
+              <button class="btn btn-primary btn-sm" id="btn-pr-base-save" data-label="Save">Save</button>
+            </div>
+            <div id="pr-base-result" style="display:none; margin-top:10px; padding:8px; border-radius:var(--radius); font-size:13px;"></div>
+          </div>
+
+          <!-- ── Custom rules ── -->
+          <div style="background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px;">
+            <div class="sub-title" id="pr-form-title">Add Custom Rule</div>
+            <p style="font-size:13px; color:var(--text-muted); margin-bottom:14px;">
+              Custom rules override the base rate during a specific window.
+              Rules are checked in <strong>creation order</strong> (lower ID = higher priority).
+              For any given hour, the <em>first</em> matching rule wins — later rules with overlapping
+              windows are shadowed unless the earlier rule is deleted.
+            </p>
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:12px;">
+              <div class="field" style="margin-bottom:0;">
+                <label for="pr-name">Rule Name <span style="color:var(--danger)">*</span></label>
+                <input type="text" id="pr-name" placeholder="e.g. Midday Surge">
+              </div>
+              <div class="field" style="margin-bottom:0;">
+                <label for="pr-hours">
+                  Hours Window <span style="color:var(--danger)">*</span>
+                  <span style="font-weight:400; color:var(--text-dim); margin-left:4px;">HH:MM-HH:MM or 24/7</span>
+                </label>
+                <input type="text" id="pr-hours" placeholder="e.g. 10:00-15:00">
+              </div>
+              <div class="field" style="margin-bottom:0;">
+                <label for="pr-rate">Rate ($/hr) <span style="color:var(--danger)">*</span></label>
+                <input type="number" id="pr-rate" min="0" step="0.01" placeholder="e.g. 9.00">
+              </div>
+            </div>
+            <div class="field">
+              <label for="pr-desc">Description <span style="color:var(--danger)">*</span></label>
+              <input type="text" id="pr-desc" placeholder="e.g. Weekday lunch surge pricing">
+            </div>
+            <div id="pr-form-result" style="display:none; margin-bottom:10px; padding:8px; border-radius:var(--radius); font-size:13px;"></div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+              <button class="btn btn-secondary btn-sm" id="btn-pr-cancel" style="display:none;" data-label="Cancel">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="btn-pr-save" data-label="Add Rule">Add Rule</button>
+            </div>
+          </div>
+
+          <!-- ── Rules table ── -->
+          <div class="sub-title">All Custom Rules</div>
+          <div class="res-table-wrap" style="border:none;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Window</th>
+                  <th>$/hr</th>
+                  <th>Description</th>
+                  <th style="text-align:center;">Priority &amp; Actions</th>
+                </tr>
+              </thead>
+              <tbody id="pricing-tbody">
+                <tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:24px;">Loading&hellip;</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div><!-- /tab-pricing -->
 
       </div><!-- /dash-content -->
     </div>

@@ -410,3 +410,57 @@ export async function deleteFloorAPI(floorId) {
 export async function getFloorSpaces(floorId) {
   return _request('GET', `/v1/floors/${floorId}/spaces`);
 }
+
+
+// =============================================================
+//  PRICING — Base Rate + Custom Rules (admin-only for writes)
+// =============================================================
+
+// All pricing endpoints require admin auth.
+
+/** GET /v1/pricing/base-rate — returns { baseRatePerHour: number } */
+export async function getBaseRate() {
+  return _authRetry('GET', '/v1/pricing/base-rate');
+}
+
+/** PUT /v1/pricing/base-rate — set the garage fallback rate. */
+export async function updateBaseRate(ratePerHour) {
+  return _authRetry('PUT', '/v1/pricing/base-rate', { baseRatePerHour: ratePerHour });
+}
+
+/**
+ * GET /v1/pricing — list all custom pricing rules ordered by sortOrder.
+ * Each rule: { rateId, rateName, applicableHours, ratePerHour, description, sortOrder }
+ */
+export async function getPricingRules() {
+  return _authRetry('GET', '/v1/pricing');
+}
+
+/** GET /v1/pricing/{id} — get a single custom rule. */
+export async function getPricingRule(rateId) {
+  return _authRetry('GET', `/v1/pricing/${rateId}`);
+}
+
+/** POST /v1/pricing — create a custom rule. */
+export async function createPricingRule(data) {
+  return _authRetry('POST', '/v1/pricing', data);
+}
+
+/** PUT /v1/pricing/{id} — update a custom rule. */
+export async function updatePricingRule(rateId, data) {
+  return _authRetry('PUT', `/v1/pricing/${rateId}`, data);
+}
+
+/** DELETE /v1/pricing/{id} — delete a custom rule. */
+export async function deletePricingRule(rateId) {
+  return _authRetry('DELETE', `/v1/pricing/${rateId}`);
+}
+
+/**
+ * POST /v1/pricing/{id}/move — reorder a rule.
+ * @param {"up"|"down"} direction
+ * Returns the full updated rule list.
+ */
+export async function movePricingRule(rateId, direction) {
+  return _authRetry('POST', `/v1/pricing/${rateId}/move`, { direction });
+}

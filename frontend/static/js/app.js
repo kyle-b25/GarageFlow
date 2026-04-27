@@ -41,6 +41,13 @@ import {
   setAuthState,
   getStoredToken,
   clearAuthState,
+  getBaseRate,
+  updateBaseRate,
+  getPricingRules,
+  createPricingRule,
+  updatePricingRule,
+  deletePricingRule,
+  movePricingRule,
 } from './api.js';
 
 let floorPollInterval = null;
@@ -636,6 +643,10 @@ function showDashLoggedIn(user) {
   document.getElementById('dash-user-info').style.display = '';
   switchTab('tab-analytics');
   refreshDashboard();
+  // Pricing tab is admin-only — show/hide the tab button based on role
+  const pricingTabBtn = document.querySelector('.tab-btn[data-tab="tab-pricing"]');
+  if (pricingTabBtn) pricingTabBtn.style.display = user.role === 'admin' ? '' : 'none';
+  if (user.role === 'admin') _initPricingTab();
 }
 
 function showDashLoggedOut() {
@@ -646,6 +657,8 @@ function showDashLoggedOut() {
   document.getElementById('dash-login').style.display = '';
   document.getElementById('dash-content').style.display = 'none';
   document.getElementById('dash-user-info').style.display = 'none';
+  const pricingBtn = document.querySelector('.tab-btn[data-tab="tab-pricing"]');
+  if (pricingBtn) pricingBtn.style.display = 'none';
   document.getElementById('dash-user').value = '';
   document.getElementById('dash-pass').value = '';
 }
@@ -690,6 +703,7 @@ function switchTab(tabId) {
   if (tabId === 'tab-staff') loadStaffList();
   if (tabId === 'tab-audit') loadAuditHistory(1);
   if (tabId === 'tab-config') loadGarageConfig();
+  if (tabId === 'tab-pricing') loadPricingRules();
 }
 
 
@@ -1259,8 +1273,33 @@ async function checkCongestion() {
 //  WIRE UP  — runs once DOM is ready
 // =============================================================
 
+
+// =============================================================
+//  KIOSK CLOCK  — Eastern Time (EST/EDT)
+// =============================================================
+
+function _updateClock() {
+  const el = document.getElementById('kiosk-clock');
+  if (!el) return;
+  const now = new Date();
+  const timePart = now.toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+  const tzLabel = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    timeZoneName: 'short',
+  }).formatToParts(now).find(p => p.type === 'timeZoneName')?.value || 'ET';
+  el.textContent = `${timePart} ${tzLabel}`;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadGarageName();
+  _updateClock();
+  setInterval(_updateClock, 1000);
   setDefaultArrival();
   checkCongestion();
   setInterval(checkCongestion, 30000);
@@ -1339,3 +1378,313 @@ document.addEventListener('DOMContentLoaded', () => {
   // Floor config
   setupFloorConfigListeners();
 });
+
+
+// =============================================================
+//  PRICING TAB
+// =============================================================
+
+let _pricingEditId  = null;   // null = create mode, integer = edit mode
+let _pricingCache   = [];     // last fetched rules
+let _pricingTabReady = false; // event listeners attached?
+
+// ------------------------------------------------------------------
+//  Hour-window helpers (mirrors utils.py logic in JS)
+// ------------------------------------------------------------------
+
+function _parseWindow(str) {
+  if (!str) return [0, 24];
+  const s = str.trim().toLowerCase();
+  if (s === '24/7' || s === 'all' || s === '') return [0, 24];
+  const parts = s.split('-');
+  if (parts.length !== 2) return [0, 24];
+  const start = parseInt(parts[0].split(':')[0], 10);
+  const end   = parseInt(parts[1].split(':')[0], 10);
+  if (isNaN(start) || isNaN(end)) return [0, 24];
+  return [start, end];
+}
+
+function _hourInWindow(hour, str) {
+  const [s, e] = _parseWindow(str);
+  if (s === 0 && e === 24) return true;
+  return s <= e ? (hour >= s && hour < e) : (hour >= s || hour < e);
+}
+
+function _nowHour() {
+  // Always use Eastern time (America/New_York) to match the backend rule engine.
+  const h = parseInt(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      hour12: false,
+    }).format(new Date()),
+    10
+  );
+  // Intl can return 24 for midnight — normalise to 0
+  return isNaN(h) ? new Date().getUTCHours() : (h === 24 ? 0 : h);
+}
+
+// ------------------------------------------------------------------
+//  Summary bar
+// ------------------------------------------------------------------
+
+function _pricingUpdateSummary(baseRate, rules) {
+  document.getElementById('pr-base-display').textContent = `$${baseRate.toFixed(2)}/hr`;
+  const h = _nowHour();
+  const active = rules.filter(r => _hourInWindow(h, r.applicableHours));
+  const winner = active.length ? active[0] : null;
+  const el = document.getElementById('pr-effective-rate');
+  if (winner) {
+    el.innerHTML = `<span style="color:var(--accent);">$${winner.ratePerHour.toFixed(2)}/hr</span>
+      <span style="color:var(--text-dim); font-size:11px; margin-left:6px;">(${escapeHtml(winner.rateName)})</span>`;
+  } else {
+    el.innerHTML = `<span style="color:var(--success);">$${baseRate.toFixed(2)}/hr</span>
+      <span style="color:var(--text-dim); font-size:11px; margin-left:6px;">(base rate)</span>`;
+  }
+  const preview = document.getElementById('pr-schedule-preview');
+  if (!rules.length) { preview.innerHTML = '<em style="color:var(--text-dim)">No custom rules — base rate applies 24/7.</em>'; return; }
+  let html = '<table style="width:100%; font-size:12px; border-collapse:collapse;">'
+    + '<thead><tr><th style="text-align:left;padding:4px 8px;color:var(--text-muted);">Rule (priority order)</th>'
+    + '<th style="text-align:left;padding:4px 8px;color:var(--text-muted);">Window</th>'
+    + '<th style="text-align:right;padding:4px 8px;color:var(--text-muted);">$/hr</th>'
+    + '<th style="text-align:center;padding:4px 8px;color:var(--text-muted);">Now</th></tr></thead><tbody>';
+  rules.forEach((r, idx) => {
+    const isNow = _hourInWindow(h, r.applicableHours);
+    // Is this the winning rule (first match)?
+    const isWinner = isNow && rules.slice(0, idx).every(prev => !_hourInWindow(h, prev.applicableHours));
+    html += `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:5px 8px; font-weight:600;">${escapeHtml(r.rateName)}</td>
+      <td style="padding:5px 8px; font-family:monospace; color:var(--accent);">${escapeHtml(r.applicableHours)}</td>
+      <td style="padding:5px 8px; text-align:right; color:var(--text);">$${r.ratePerHour.toFixed(2)}</td>
+      <td style="padding:5px 8px; text-align:center;">
+        ${isWinner ? '<span style="background:rgba(46,204,113,0.15);color:var(--success);padding:1px 6px;border-radius:10px;font-size:10px;font-weight:600;">ACTIVE</span>'
+          : isNow  ? '<span style="background:rgba(240,165,0,0.10);color:var(--text-dim);padding:1px 6px;border-radius:10px;font-size:10px;">shadowed</span>'
+          : ''}
+      </td>
+    </tr>`;
+  });
+  html += `<tr style="border-top:1px solid var(--border);">
+    <td style="padding:5px 8px; color:var(--text-muted); font-style:italic;">Base rate (fallback)</td>
+    <td style="padding:5px 8px; font-family:monospace; color:var(--text-dim);">24/7</td>
+    <td style="padding:5px 8px; text-align:right; color:var(--text-muted);">$${baseRate.toFixed(2)}</td>
+    <td style="padding:5px 8px; text-align:center;">
+      ${!rules.find(r => _hourInWindow(h, r.applicableHours))
+        ? '<span style="background:rgba(46,204,113,0.15);color:var(--success);padding:1px 6px;border-radius:10px;font-size:10px;font-weight:600;">ACTIVE</span>'
+        : ''}
+    </td>
+  </tr>`;
+  html += '</tbody></table>';
+  preview.innerHTML = html;
+}
+
+// ------------------------------------------------------------------
+//  Base rate
+// ------------------------------------------------------------------
+
+async function _loadBaseRate() {
+  try {
+    const res = await getBaseRate();
+    const inp = document.getElementById('pr-base-input');
+    if (inp) inp.value = res.baseRatePerHour.toFixed(2);
+    return res.baseRatePerHour;
+  } catch (_e) { return 2.00; }
+}
+
+// ------------------------------------------------------------------
+//  Rules table
+// ------------------------------------------------------------------
+
+async function loadPricingRules() {
+  const tbody = document.getElementById('pricing-tbody');
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:24px;">Loading…</td></tr>';
+  const baseRate = await _loadBaseRate();
+  try {
+    const rules = await getPricingRules();
+    _pricingCache = rules;
+    _pricingUpdateSummary(baseRate, rules);
+    document.getElementById('pricing-rule-count').textContent = rules.length;
+
+    if (!rules.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);padding:24px;">No custom rules — add one below.</td></tr>';
+      return;
+    }
+
+    const h = _nowHour();
+    tbody.innerHTML = rules.map((r, idx) => {
+      const isNow = _hourInWindow(h, r.applicableHours);
+      const isWinner = isNow && rules.slice(0, idx).every(p => !_hourInWindow(h, p.applicableHours));
+      const badge = isWinner
+        ? '<span style="background:rgba(46,204,113,0.15);color:var(--success);padding:1px 6px;border-radius:10px;font-size:10px;font-weight:600;margin-left:6px;">ACTIVE</span>'
+        : isNow
+        ? '<span style="background:rgba(240,165,0,0.10);color:var(--text-dim);padding:1px 6px;border-radius:10px;font-size:10px;margin-left:6px;">shadowed</span>'
+        : '';
+      const isFirst = idx === 0;
+      const isLast  = idx === rules.length - 1;
+      return `<tr>
+        <td style="font-weight:600;">${escapeHtml(r.rateName)}${badge}</td>
+        <td style="font-family:monospace;color:var(--accent);">${escapeHtml(r.applicableHours)}</td>
+        <td style="font-weight:600;color:var(--text);">$${r.ratePerHour.toFixed(2)}<span style="color:var(--text-muted);font-weight:400;font-size:11px;">/hr</span></td>
+        <td style="color:var(--text-muted);font-size:12px;max-width:200px;white-space:normal;line-height:1.4;">${escapeHtml(r.description)}</td>
+        <td style="text-align:center;">
+          <div style="display:flex;gap:4px;justify-content:center;align-items:center;">
+            <button class="btn btn-secondary btn-sm" title="Move up (higher priority)"
+              style="padding:3px 7px; font-size:13px; ${isFirst ? 'opacity:0.3;cursor:not-allowed;' : ''}"
+              onclick="pricingMove(${r.rateId},'up')" ${isFirst ? 'disabled' : ''}>▲</button>
+            <button class="btn btn-secondary btn-sm" title="Move down (lower priority)"
+              style="padding:3px 7px; font-size:13px; ${isLast ? 'opacity:0.3;cursor:not-allowed;' : ''}"
+              onclick="pricingMove(${r.rateId},'down')" ${isLast ? 'disabled' : ''}>▼</button>
+            <button class="btn btn-secondary btn-sm" onclick="pricingEdit(${r.rateId})" data-label="Edit">Edit</button>
+            <button class="btn btn-secondary btn-sm btn-danger-text" onclick="pricingDelete(${r.rateId},'${escapeHtml(r.rateName).replace(/'/g,"\'")}')">Delete</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger);padding:24px;">Failed to load rules: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+// ------------------------------------------------------------------
+//  Form helpers
+// ------------------------------------------------------------------
+
+function _pricingFormReset() {
+  _pricingEditId = null;
+  document.getElementById('pr-form-title').textContent = 'Add Custom Rule';
+  document.getElementById('btn-pr-save').textContent = 'Add Rule';
+  document.getElementById('btn-pr-save').dataset.label = 'Add Rule';
+  document.getElementById('btn-pr-cancel').style.display = 'none';
+  document.getElementById('pr-name').value = '';
+  document.getElementById('pr-hours').value = '';
+  document.getElementById('pr-rate').value = '';
+  document.getElementById('pr-desc').value = '';
+  hideFeedback(document.getElementById('pr-form-result'));
+}
+
+window.pricingEdit = function(rateId) {
+  const r = _pricingCache.find(x => x.rateId === rateId);
+  if (!r) return;
+  _pricingEditId = rateId;
+  document.getElementById('pr-form-title').textContent = `Edit — ${r.rateName}`;
+  document.getElementById('btn-pr-save').textContent = 'Save Changes';
+  document.getElementById('btn-pr-save').dataset.label = 'Save Changes';
+  document.getElementById('btn-pr-cancel').style.display = 'inline-flex';
+  document.getElementById('pr-name').value = r.rateName;
+  document.getElementById('pr-hours').value = r.applicableHours;
+  document.getElementById('pr-rate').value = r.ratePerHour.toFixed(2);
+  document.getElementById('pr-desc').value = r.description;
+  hideFeedback(document.getElementById('pr-form-result'));
+  document.getElementById('pr-form-title').scrollIntoView({ behavior:'smooth', block:'nearest' });
+};
+
+window.pricingDelete = async function(rateId, name) {
+  if (!confirm(`Delete rule "${name}"?`)) return;
+  try {
+    await deletePricingRule(rateId);
+    await loadPricingRules();
+  } catch (err) { alert(`Delete failed: ${err.message}`); }
+};
+
+window.pricingMove = async function(rateId, direction) {
+  try {
+    // Backend returns the full updated list — re-render directly without a second fetch
+    const updated = await movePricingRule(rateId, direction);
+    _pricingCache = updated;
+    const baseRate = parseFloat(document.getElementById('pr-base-input')?.value || '2');
+    _pricingUpdateSummary(baseRate, updated);
+    document.getElementById('pricing-rule-count').textContent = updated.length;
+    const h = _nowHour();
+    const tbody = document.getElementById('pricing-tbody');
+    tbody.innerHTML = updated.map((r, idx) => {
+      const isNow = _hourInWindow(h, r.applicableHours);
+      const isWinner = isNow && updated.slice(0, idx).every(p => !_hourInWindow(h, p.applicableHours));
+      const badge = isWinner
+        ? '<span style="background:rgba(46,204,113,0.15);color:var(--success);padding:1px 6px;border-radius:10px;font-size:10px;font-weight:600;margin-left:6px;">ACTIVE</span>'
+        : isNow
+        ? '<span style="background:rgba(240,165,0,0.10);color:var(--text-dim);padding:1px 6px;border-radius:10px;font-size:10px;margin-left:6px;">shadowed</span>'
+        : '';
+      const isFirst = idx === 0;
+      const isLast  = idx === updated.length - 1;
+      return `<tr>
+        <td style="font-weight:600;">${escapeHtml(r.rateName)}${badge}</td>
+        <td style="font-family:monospace;color:var(--accent);">${escapeHtml(r.applicableHours)}</td>
+        <td style="font-weight:600;color:var(--text);">$${r.ratePerHour.toFixed(2)}<span style="color:var(--text-muted);font-weight:400;font-size:11px;">/hr</span></td>
+        <td style="color:var(--text-muted);font-size:12px;max-width:200px;white-space:normal;line-height:1.4;">${escapeHtml(r.description)}</td>
+        <td style="text-align:center;">
+          <div style="display:flex;gap:4px;justify-content:center;align-items:center;">
+            <button class="btn btn-secondary btn-sm" title="Move up (higher priority)"
+              style="padding:3px 7px; font-size:13px; ${isFirst ? 'opacity:0.3;cursor:not-allowed;' : ''}"
+              onclick="pricingMove(${r.rateId},'up')" ${isFirst ? 'disabled' : ''}>▲</button>
+            <button class="btn btn-secondary btn-sm" title="Move down (lower priority)"
+              style="padding:3px 7px; font-size:13px; ${isLast ? 'opacity:0.3;cursor:not-allowed;' : ''}"
+              onclick="pricingMove(${r.rateId},'down')" ${isLast ? 'disabled' : ''}>▼</button>
+            <button class="btn btn-secondary btn-sm" onclick="pricingEdit(${r.rateId})" data-label="Edit">Edit</button>
+            <button class="btn btn-secondary btn-sm btn-danger-text" onclick="pricingDelete(${r.rateId},'${escapeHtml(r.rateName).replace(/'/g,"\'")}')">Delete</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    alert(`Move failed: ${err.message}`);
+  }
+};
+
+// ------------------------------------------------------------------
+//  Init (called once on login)
+// ------------------------------------------------------------------
+
+function _initPricingTab() {
+  if (_pricingTabReady) { loadPricingRules(); return; }
+  _pricingTabReady = true;
+
+  // Base rate save
+  document.getElementById('btn-pr-base-save').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-pr-base-save');
+    const res  = document.getElementById('pr-base-result');
+    const val  = parseFloat(document.getElementById('pr-base-input').value);
+    if (isNaN(val) || val < 0) { showFeedback(res, 'Enter a valid rate >= 0', true); return; }
+    setLoading(btn, true); hideFeedback(res);
+    try {
+      await updateBaseRate(val);
+      showFeedback(res, `Base rate updated to $${val.toFixed(2)}/hr`, false);
+      await loadPricingRules();
+    } catch (err) {
+      showFeedback(res, `Error: ${err.message}`, true);
+    } finally { setLoading(btn, false); }
+  });
+
+  // Rule save
+  document.getElementById('btn-pr-save').addEventListener('click', async () => {
+    const btn    = document.getElementById('btn-pr-save');
+    const res    = document.getElementById('pr-form-result');
+    const name   = document.getElementById('pr-name').value.trim();
+    const hours  = document.getElementById('pr-hours').value.trim();
+    const rateV  = parseFloat(document.getElementById('pr-rate').value);
+    const desc   = document.getElementById('pr-desc').value.trim();
+
+    if (!name || !hours || isNaN(rateV) || rateV < 0 || !desc) {
+      showFeedback(res, 'All fields are required and rate must be >= 0.', true); return;
+    }
+
+    const payload = { rateName: name, applicableHours: hours, ratePerHour: rateV, description: desc };
+    setLoading(btn, true); hideFeedback(res);
+    try {
+      if (_pricingEditId !== null) {
+        await updatePricingRule(_pricingEditId, payload);
+        showFeedback(res, `"${name}" updated.`, false);
+      } else {
+        await createPricingRule(payload);
+        showFeedback(res, `"${name}" created.`, false);
+      }
+      _pricingFormReset();
+      await loadPricingRules();
+    } catch (err) {
+      showFeedback(res, `Error: ${err.message}`, true);
+    } finally { setLoading(btn, false); }
+  });
+
+  // Cancel edit
+  document.getElementById('btn-pr-cancel').addEventListener('click', _pricingFormReset);
+
+  loadPricingRules();
+}
