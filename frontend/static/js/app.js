@@ -19,7 +19,6 @@ import {
   getPeakHours,
   getCapacityAlert,
   getTicketsByPlate,
-  getActiveTickets,
   getClosedTickets,
   overrideTicket,
   exitTicket,
@@ -224,48 +223,37 @@ async function handleEntryFinish() {
 //  VEHICLE EXIT  —  PUT /v1/tickets/{id}/exit + Stripe
 // =============================================================
 
-let _exitTicketData = null;  // stashed after lookup
-let _activeTicketsCache = [];  // cached active tickets for dropdown
+let _exitTicketData = null;  // stashed after plate lookup
 
-async function loadActiveTickets() {
-  const select = document.getElementById('exit-plate');
-  try {
-    const tickets = await getActiveTickets();
-    _activeTicketsCache = tickets || [];
-    select.innerHTML = '<option value="">— Select a vehicle —</option>';
-    _activeTicketsCache.forEach(t => {
-      const entry = new Date(t.entryTime).toLocaleString();
-      select.innerHTML += `<option value="${t.ticketId}">${escapeHtml(t.licensePlate)} — Floor ${t.assignedFloor} — ${entry}</option>`;
-    });
-  } catch (_e) {
-    select.innerHTML = '<option value="">Failed to load tickets</option>';
-  }
-}
+async function handleExitCheckStatus() {
+  const plate = document.getElementById('exit-plate').value.trim();
+  if (!plate) { alert('Please enter a license plate number.'); return; }
+  if (!isValidPlate(plate)) { alert('Invalid plate format. Use 2-10 letters/numbers (hyphens OK).'); return; }
 
-async function handleExitLookup() {
-  const ticketId = document.getElementById('exit-plate').value;
-  if (!ticketId) { alert('Please select a vehicle from the dropdown.'); return; }
-
-  const btn = document.getElementById('btn-exit-lookup');
-  setLoading(btn, true);
+  const btn = document.getElementById('btn-exit-check');
+  const statusEl = document.getElementById('exit-status-result');
   const info = document.getElementById('exit-ticket-info');
   const result = document.getElementById('exit-result');
+
+  setLoading(btn, true);
   info.style.display = 'none';
   result.style.display = 'none';
+  _exitTicketData = null;
 
   try {
-    const t = _activeTicketsCache.find(t => String(t.ticketId) === ticketId);
-    if (!t) {
-      showFeedback(result, 'Ticket not found. Try refreshing.', true);
-      _exitTicketData = null;
+    const tickets = await getTicketsByPlate(plate);
+    const active = Array.isArray(tickets) && tickets.length > 0 ? tickets[0] : null;
+    if (!active) {
+      showFeedback(statusEl, `No active ticket found for ${plate.toUpperCase()} — vehicle is not in the garage.`, true);
       return;
     }
-    _exitTicketData = t;
-    document.getElementById('exit-ticket-id').textContent = t.ticketId;
-    document.getElementById('exit-entry-time').textContent = new Date(t.entryTime).toLocaleString();
+    _exitTicketData = active;
+    showFeedback(statusEl, `Vehicle found — Floor ${active.assignedFloor} · Entry: ${new Date(active.entryTime).toLocaleString()}`, false);
+    document.getElementById('exit-ticket-id').textContent = active.ticketId;
+    document.getElementById('exit-entry-time').textContent = new Date(active.entryTime).toLocaleString();
     info.style.display = 'block';
   } catch (err) {
-    showFeedback(result, `Lookup failed: ${err.message}`, true);
+    showFeedback(statusEl, `Lookup failed: ${err.message}`, true);
   } finally {
     setLoading(btn, false);
   }
@@ -381,6 +369,7 @@ async function handleStripePayment(exitRes) {
 function resetExitPanel() {
   _exitTicketData = null;
   document.getElementById('exit-plate').value = '';
+  document.getElementById('exit-status-result').style.display = 'none';
   document.getElementById('exit-ticket-info').style.display = 'none';
   document.getElementById('exit-card-wrap').style.display = 'none';
   document.getElementById('exit-fee-row').style.display = 'none';
@@ -388,7 +377,6 @@ function resetExitPanel() {
   payBtn.style.display = 'none';
   document.getElementById('btn-exit-process').style.display = '';
   if (cardElement) { cardElement.destroy(); cardElement = null; }
-  loadActiveTickets();
 }
 
 function handleExitPaymentChange() {
@@ -954,7 +942,6 @@ async function handleReopenTicket(ticketId) {
     await overrideTicket(ticketId, { action: 'reopen', reason: 'Operator correction via admin panel' });
     showToast(`Ticket #${ticketId} reopened successfully.`, 'success');
     searchClosedTickets();
-    loadActiveTickets(); // refresh exit dropdown
   } catch (err) {
     showToast(`Failed to reopen: ${err.message}`, 'error');
   }
@@ -1291,11 +1278,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Exit
-  loadActiveTickets();
-  document.getElementById('btn-exit-refresh')
-    .addEventListener('click', loadActiveTickets);
-  document.getElementById('btn-exit-lookup')
-    .addEventListener('click', handleExitLookup);
+  document.getElementById('btn-exit-check')
+    .addEventListener('click', handleExitCheckStatus);
+  document.getElementById('exit-plate')
+    .addEventListener('keydown', e => { if (e.key === 'Enter') handleExitCheckStatus(); });
   document.getElementById('btn-exit-process')
     .addEventListener('click', handleExitProcess);
   document.getElementById('exit-payment')
