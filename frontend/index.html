@@ -102,6 +102,81 @@
     }
   }
 
+  /* ── Ticket Creation / Error Popup ── */
+  .popup-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .popup-overlay.hidden {
+    display: none;
+  }
+
+  .hidden {
+    display: none;
+  }
+
+  .popup-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 28px 32px;
+    min-width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .popup-card h2 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 28px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-align: center;
+  }
+
+  .popup-card p {
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+
+  .popup-card p span {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .popup-card button {
+    margin-top: 8px;
+    padding: 10px;
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: var(--radius);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+
+  .popup-card button:hover {
+    opacity: 0.85;
+  }
+
+  .popup-card h2.error {
+    background: none;
+    text-align: center;
+    -webkit-text-fill-color: var(--danger);
+    color: var(--danger);
+  }
+
   .panel {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -393,6 +468,26 @@
         <button class="btn btn-secondary" id="btn-conf-dismiss" style="margin-top:14px; width:100%;" data-label="New Entry">New Entry</button>
       </div>
     </div>
+    
+
+    <!-- Ticket Creation Popup -->
+    <div id="ticket-popup" class="popup-overlay hidden">
+      <div class="popup-card">
+        <h2 id="ticket-popup-title">Ticket created!</h2>
+        <p id="ticket-popup-error-msg" class="popup-error hidden"></p>
+    
+        <div id="ticket-popup-details">
+          <p><strong>Ticket ID:</strong> <span id="ticket-popup-id"></span></p>
+          <p><strong>Plate:</strong> <span id="ticket-popup-plate"></span></p>
+          <p><strong>Assigned Floor:</strong> <span id="ticket-popup-floor"></span></p>
+          <p><strong>Entry Time:</strong> <span id="ticket-popup-time"></span></p>
+          <p><strong>Status:</strong> <span id="ticket-popup-status"></span></p>
+        </div>
+    
+        <button id="ticket-popup-ok">OK</button>
+      </div>
+    </div>
+
 
     <!-- ══ Vehicle Exit ══ -->
     <div class="panel" id="panel-exit">

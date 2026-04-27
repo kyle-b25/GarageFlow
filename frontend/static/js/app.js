@@ -103,6 +103,40 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
+//For ticket creation / error popup
+
+function openPopup() {
+  document.getElementById('ticket-popup').classList.remove('hidden');
+  document.getElementById('ticket-popup-ok').onclick = () => {
+    document.getElementById('ticket-popup').classList.add('hidden');
+  }
+}
+  
+function showTicketPopup(result, plate) {
+  document.getElementById('ticket-popup-title').textContent = 'Ticket created!';
+  document.getElementById('ticket-popup-title').classList.remove('error');
+  document.getElementById('ticket-popup-details').classList.remove('hidden');
+  document.getElementById('ticket-popup-error-msg').classList.add('hidden');
+
+  document.getElementById('ticket-popup-id').textContent = result.ticketId;
+  document.getElementById('ticket-popup-plate').textContent = result.licensePlate || plate;
+  document.getElementById('ticket-popup-floor').textContent = floorLabel(result.assignedFloor);
+  document.getElementById('ticket-popup-time').textContent = new Date(result.entryTime).toLocaleString();
+  document.getElementById('ticket-popup-status').textContent = result.status;
+
+  openPopup();
+}
+  
+function showErrorPopup(message) {
+  document.getElementById('ticket-popup-title').textContent = 'Could not create ticket';
+  document.getElementById('ticket-popup-title').classList.add('error');
+  document.getElementById('ticket-popup-details').classList.add('hidden');
+  document.getElementById('ticket-popup-error-msg').textContent = message;
+  document.getElementById('ticket-popup-error-msg').classList.remove('hidden');
+
+  openPopup();
+}
+
 // ── Input validation helpers ──────────────────────────────────────
 // Basic format checks — not exhaustive, but catch obvious typos.
 
@@ -164,25 +198,22 @@ async function handleEntryFinish() {
   const plate       = document.getElementById('entry-plate').value.trim();
   const driverClass = document.getElementById('vehicle-type').value;
 
-  if (!plate)       { alert('Please enter a license plate number.'); return; }
-  if (!isValidPlate(plate)) { alert('Invalid plate format. Use 2-10 letters/numbers (hyphens OK).'); return; }
-  if (!driverClass) { alert('Please select a driver class.'); return; }
+  if (!plate)       { showErrorPopup('Please enter a license plate number.'); return; }
+  if (!isValidPlate(plate)) { showErrorPopup('Invalid plate format. Use 2-10 letters/numbers (hyphens OK).'); return; }
+  if (!driverClass) { showErrorPopup('Please select a driver class.'); return; }
 
   const btn = document.getElementById('btn-entry-submit');
   setLoading(btn, true);
 
   try {
     const result = await postTicket(plate, driverClass);
-    document.getElementById('conf-ticket-id').textContent = result.ticketId;
-    document.getElementById('conf-plate').textContent = result.licensePlate || plate;
-    document.getElementById('conf-floor').textContent = floorLabel(result.assignedFloor);
-    document.getElementById('conf-time').textContent = new Date(result.entryTime).toLocaleString();
-    document.getElementById('conf-status').textContent = result.status;
-    document.getElementById('entry-confirmation').style.display = 'block';
+
+    showTicketPopup(result, plate);
+
     document.getElementById('entry-plate').value = '';
     document.getElementById('vehicle-type').value = '';
   } catch (err) {
-    alert(`Could not create ticket: ${err.message}`);
+    showErrorPopup(err.message);
   } finally {
     setLoading(btn, false);
   }
