@@ -399,17 +399,13 @@
       <div class="panel-title">Vehicle Exit</div>
 
       <div class="field">
-        <label for="exit-plate">Active Tickets</label>
-        <div class="select-wrap">
-          <select id="exit-plate">
-            <option value="">— Select a vehicle —</option>
-          </select>
-        </div>
+        <label for="exit-plate">License Plate</label>
+        <input type="text" id="exit-plate" placeholder="e.g. ABC-1234">
       </div>
       <div style="margin-top:10px; display:flex; gap:8px; justify-content:flex-end;">
-        <button class="btn btn-secondary" id="btn-exit-refresh" data-label="Refresh" style="font-size:12px;">Refresh</button>
-        <button class="btn btn-secondary" id="btn-exit-lookup" data-label="Look Up Ticket">Look Up Ticket</button>
+        <button class="btn btn-secondary" id="btn-exit-check" data-label="Check Status">Check Status</button>
       </div>
+      <div id="exit-status-result" style="display:none; margin-top:12px; padding:10px; border-radius:var(--radius); font-size:13px;"></div>
 
       <div id="exit-ticket-info" style="display:none; margin-top:16px; padding:16px; background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius);">
         <div style="display:grid; grid-template-columns:auto 1fr; gap:6px 12px; font-size:14px;">
@@ -437,7 +433,7 @@
         </div>
 
         <div style="margin-top:14px; display:flex; gap:8px;">
-          <button class="btn btn-primary" id="btn-exit-process" style="flex:1;" data-label="Process Exit">Process Exit</button>
+          <button class="btn btn-primary" id="btn-exit-process" style="flex:1;" data-label="Exit Vehicle">Exit Vehicle</button>
           <button class="btn btn-primary" id="btn-exit-pay" style="flex:1; display:none;" data-label="Pay">Pay</button>
         </div>
       </div>
